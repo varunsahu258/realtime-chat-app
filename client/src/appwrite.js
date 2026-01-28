@@ -1,11 +1,13 @@
-import { Client, Account, Databases } from "appwrite";
+import { Client, Account, Databases, ID } from "appwrite";
 
-const client = new Client()
-  .setEndpoint(import.meta.env.VITE_APPWRITE_ENDPOINT || "https://sgp.cloud.appwrite.io/v1")
-  .setProject(import.meta.env.VITE_APPWRITE_PROJECT_ID || "");
+const client = new Client();
+
+client
+  .setEndpoint(import.meta.env.VITE_APPWRITE_ENDPOINT)
+  .setProject(import.meta.env.VITE_APPWRITE_PROJECT_ID);
 
 export const account = new Account(client);
 export const databases = new Databases(client);
+export { ID };
 
-// Export client for advanced usage
 export default client;
