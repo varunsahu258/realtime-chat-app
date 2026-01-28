@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { account } from "./appwrite";
+import { ID } from "appwrite";
+
 
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3000";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -39,23 +41,32 @@ function App() {
   // ====================================
 
   const signup = async () => {
-    try {
-      await account.create("unique()", email, password);
-      await login();
-    } catch (err) {
-      alert("Signup failed: " + err.message);
-    }
+  try {
+    await account.create(ID.unique(), email, password);
+    await login();
+  } catch (err) {
+    alert("Signup failed: " + err.message);
+  }
   };
 
+
   const login = async () => {
-    try {
+  try {
+    if (typeof account.createEmailPasswordSession === "function") {
       await account.createEmailPasswordSession(email, password);
-      const user = await account.get();
-      setUser(user);
-    } catch (err) {
-      alert("Login failed: " + err.message);
+    } else if (typeof account.createSession === "function") {
+      await account.createSession(email, password);
+    } else {
+      throw new Error("Appwrite SDK missing login method");
     }
+
+    const user = await account.get();
+    setUser(user);
+  } catch (err) {
+    alert("Login failed: " + err.message);
+  }
   };
+
 
   const logout = async () => {
     try {
