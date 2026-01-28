@@ -23,7 +23,7 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 // Environment variables
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 10000;
 const APPWRITE_ENDPOINT = process.env.APPWRITE_ENDPOINT || "http://localhost/v1";
 const APPWRITE_PROJECT_ID = process.env.APPWRITE_PROJECT_ID || "";
 
