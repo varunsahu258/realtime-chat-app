@@ -9,38 +9,35 @@ const fetch = require("node-fetch");
 const app = express();
 app.use(express.json());
 
-// --------------------
 // CORS configuration
-// --------------------
 const allowedOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
 
-// Add localhost for dev
+// Always allow localhost for dev
 allowedOrigins.push("http://localhost:5173");
 allowedOrigins.push("http://localhost:3000");
 
-console.log("✅ Allowed CORS origins:", allowedOrigins);
+console.log("✅ Allowed Origins:", allowedOrigins);
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow server-to-server / Postman / curl (no origin header)
+    origin: (origin, callback) => {
+      // Allow Postman/curl (no origin header)
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 
-      console.log("❌ Blocked by CORS:", origin);
+      console.log("❌ CORS BLOCKED ORIGIN:", origin);
       return callback(null, false);
     },
     credentials: true,
   })
 );
 
-// Handle preflight OPTIONS requests
 app.options("*", cors());
 
 
