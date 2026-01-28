@@ -44,10 +44,8 @@ function App() {
   
     const signup = async () => {
       try {
-        // ✅ Create account
         await account.create(ID.unique(), email, password);
     
-        // ✅ Immediately login after signup (SDK compatible)
         if (typeof account.createEmailPasswordSession === "function") {
           await account.createEmailPasswordSession(email, password);
         } else if (typeof account.createSession === "function") {
@@ -58,7 +56,6 @@ function App() {
           throw new Error("Appwrite SDK missing session creation method");
         }
     
-        // ✅ Fetch user
         const user = await account.get();
         setUser(user);
       } catch (err) {
@@ -140,7 +137,7 @@ function App() {
         );
         break;
 
-      case "USER_TYPING":
+      case "USER_TYPING":{
         const { userId, typing } = msg.payload;
         setTypingUsers((prev) => {
           const newSet = new Set(prev);
@@ -152,8 +149,9 @@ function App() {
           return newSet;
         });
         break;
+      }
 
-      case "USER_STATUS":
+      case "USER_STATUS":{
         const { userId: statusUserId, status } = msg.payload;
         setOnlineUsers((prev) => {
           const newSet = new Set(prev);
@@ -165,7 +163,7 @@ function App() {
           return newSet;
         });
         break;
-
+      }
       case "USER_JOINED":
       case "USER_LEFT":
         // Optionally show notifications
