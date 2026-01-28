@@ -9,29 +9,26 @@ const fetch = require("node-fetch");
 const app = express();
 app.use(express.json());
 
-// CORS configuration
 const allowedOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
 
-// Always allow localhost for dev
 allowedOrigins.push("http://localhost:5173");
 allowedOrigins.push("http://localhost:3000");
 
-console.log("✅ Allowed Origins:", allowedOrigins);
+console.log("✅ Allowed origins:", allowedOrigins);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow Postman/curl (no origin header)
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 
-      console.log("❌ CORS BLOCKED ORIGIN:", origin);
+      console.log("❌ CORS blocked origin:", origin);
       return callback(null, false);
     },
     credentials: true,
@@ -39,7 +36,6 @@ app.use(
 );
 
 app.options("*", cors());
-
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
