@@ -37,9 +37,26 @@ function App() {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
 
   // ====================================
+  // DEBUG
+  // ====================================
+  useEffect(() => {
+  console.log("✅ ACCOUNT OBJECT:", account);
+  console.log("✅ account constructor:", account?.constructor?.name);
+  console.log(
+    "✅ METHOD createEmailPasswordSession:",
+    typeof account?.createEmailPasswordSession
+  );
+  console.log("✅ METHOD createSession:", typeof account?.createSession);
+  console.log("✅ METHOD get:", typeof account?.get);
+  console.log("✅ METHOD createJWT:", typeof account?.createJWT);
+}, []);
+
+  
+  // ====================================
   // AUTH FUNCTIONS
   // ====================================
 
+  
   const signup = async () => {
   try {
     await account.create(ID.unique(), email, password);
