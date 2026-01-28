@@ -57,32 +57,53 @@ function App() {
   // ====================================
 
   
-  const signup = async () => {
-  try {
-    await account.create(ID.unique(), email, password);
-    await login();
-  } catch (err) {
-    alert("Signup failed: " + err.message);
-  }
-  };
+    const signup = async () => {
+      try {
+        // ✅ Create account
+        await account.create(ID.unique(), email, password);
+    
+        // ✅ Immediately login after signup (SDK compatible)
+        if (typeof account.createEmailPasswordSession === "function") {
+          await account.createEmailPasswordSession(email, password);
+        } else if (typeof account.createSession === "function") {
+          await account.createSession(email, password);
+        } else if (typeof account.createEmailSession === "function") {
+          await account.createEmailSession(email, password);
+        } else {
+          throw new Error("Appwrite SDK missing session creation method");
+        }
+    
+        // ✅ Fetch user
+        const user = await account.get();
+        setUser(user);
+      } catch (err) {
+        alert("Signup failed: " + (err?.message || err));
+        console.error(err);
+      }
+    };
+
 
 
   const login = async () => {
-  try {
-    if (typeof account.createEmailPasswordSession === "function") {
-      await account.createEmailPasswordSession(email, password);
-    } else if (typeof account.createSession === "function") {
-      await account.createSession(email, password);
-    } else {
-      throw new Error("Appwrite SDK missing login method");
+    try {
+      if (typeof account.createEmailPasswordSession === "function") {
+        await account.createEmailPasswordSession(email, password);
+      } else if (typeof account.createSession === "function") {
+        await account.createSession(email, password);
+      } else if (typeof account.createEmailSession === "function") {
+        await account.createEmailSession(email, password);
+      } else {
+        throw new Error("Appwrite SDK missing login method");
+      }
+  
+      const user = await account.get();
+      setUser(user);
+    } catch (err) {
+      alert("Login failed: " + (err?.message || err));
+      console.error(err);
     }
-
-    const user = await account.get();
-    setUser(user);
-  } catch (err) {
-    alert("Login failed: " + err.message);
-  }
   };
+
 
 
   const logout = async () => {
