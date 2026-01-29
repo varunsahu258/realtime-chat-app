@@ -408,16 +408,203 @@ app.post('/api/contacts/request', async (req, res) => {
       return res.status(409).json({ error: 'Contact already exists' });
     }
     
-    // Create contact (auto-accept)
+    // Create contact
     await pool.query(
       'INSERT INTO contacts (user_id, contact_id, status) VALUES ($1, $2, $3)',
-      [userId, contactId, 'accepted']
+      [userId, contactId, 'pending']
     );
     
     res.json({ success: true, contactId });
   } catch (err) {
     console.error('Contact request error:', err);
     res.status(500).json({ error: 'Failed to send request' });
+  }
+});
+
+// Add these routes to your server/index.js file
+
+/**
+ * Get pending contact requests for a user
+ */
+app.get('/api/contacts/requests', async (req, res) => {
+  try {
+    const { userId } = req.query;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'userId parameter required' });
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        c.id,
+        c.user_id,
+        c.contact_id,
+        c.status,
+        u.email,
+        u.name
+      FROM contacts c
+      JOIN users u ON c.user_id = u.id
+      WHERE c.contact_id = $1 AND c.status = 'pending'
+      ORDER BY c.created_at DESC
+    `, [userId]);
+    
+    res.json({ requests: result.rows });
+  } catch (err) {
+    console.error('Get contact requests error:', err);
+    res.status(500).json({ error: 'Failed to get contact requests' });
+  }
+});
+
+/**
+ * Accept contact request
+ */
+app.post('/api/contacts/accept', async (req, res) => {
+  try {
+    const { requestId, userId } = req.body;
+
+    if (!requestId || !userId) {
+      return res.status(400).json({ error: 'requestId and userId required' });
+    }
+
+    await pool.query("BEGIN");
+
+    // Get request row, ensure it belongs to this user
+    const request = await pool.query(
+      `SELECT id, user_id, contact_id, status
+       FROM contacts
+       WHERE id = $1 AND contact_id = $2 AND status = 'pending'
+       LIMIT 1`,
+      [requestId, userId]
+    );
+
+    if (request.rows.length === 0) {
+      await pool.query("ROLLBACK");
+      return res.status(404).json({ error: "Request not found" });
+    }
+
+    const fromUserId = request.rows[0].user_id;   // requester
+    const toUserId = request.rows[0].contact_id;  // receiver (this user)
+
+    // Accept the original request
+    await pool.query(
+      `UPDATE contacts SET status = 'accepted'
+       WHERE id = $1`,
+      [requestId]
+    );
+
+    // Create reverse row if it doesn't exist
+    await pool.query(
+      `INSERT INTO contacts (user_id, contact_id, status)
+       VALUES ($1, $2, 'accepted')
+       ON CONFLICT DO NOTHING`,
+      [toUserId, fromUserId]
+    );
+
+    await pool.query("COMMIT");
+
+    res.json({ success: true });
+  } catch (err) {
+    await pool.query("ROLLBACK");
+    console.error('Accept contact error:', err);
+    res.status(500).json({ error: 'Failed to accept contact' });
+  }
+});
+
+
+/**
+ * Reject contact request
+ */
+app.post('/api/contacts/reject', async (req, res) => {
+  try {
+    const { requestId, userId } = req.body;
+    
+    if (!requestId || !userId) {
+      return res.status(400).json({ error: 'requestId and userId required' });
+    }
+
+    await pool.query(
+      'DELETE FROM contacts WHERE id = $1',
+      [requestId]
+    );
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Reject contact error:', err);
+    res.status(500).json({ error: 'Failed to reject contact' });
+  }
+});
+
+/**
+ * Invite user to room
+ */
+app.post('/api/rooms/invite', async (req, res) => {
+  try {
+    const { roomId, userId, invitedBy } = req.body;
+    
+    if (!roomId || !userId || !invitedBy) {
+      return res.status(400).json({ error: 'roomId, userId, and invitedBy required' });
+    }
+
+    // Check if room exists
+    const roomCheck = await pool.query('SELECT id FROM rooms WHERE id = $1', [roomId]);
+    if (roomCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    // Check if user is already a member
+    const memberCheck = await pool.query(
+      'SELECT id FROM room_members WHERE room_id = $1 AND user_id = $2',
+      [roomId, userId]
+    );
+    
+    if (memberCheck.rows.length > 0) {
+      return res.status(409).json({ error: 'User is already a member' });
+    }
+
+    // Add user to room
+    await pool.query(
+      'INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)',
+      [roomId, userId]
+    );
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Invite user error:', err);
+    res.status(500).json({ error: 'Failed to invite user' });
+  }
+});
+
+/**
+ * Update room name
+ */
+app.post('/api/rooms/update', async (req, res) => {
+  try {
+    const { roomId, name, userId } = req.body;
+    
+    if (!roomId || !name || !userId) {
+      return res.status(400).json({ error: 'roomId, name, and userId required' });
+    }
+
+    // Check if user is a member of the room
+    const memberCheck = await pool.query(
+      'SELECT id FROM room_members WHERE room_id = $1 AND user_id = $2',
+      [roomId, userId]
+    );
+    
+    if (memberCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'User is not a member of this room' });
+    }
+
+    // Update room name
+    await pool.query(
+      'UPDATE rooms SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [name.trim(), roomId]
+    );
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update room error:', err);
+    res.status(500).json({ error: 'Failed to update room' });
   }
 });
 
