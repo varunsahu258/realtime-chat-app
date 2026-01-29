@@ -145,14 +145,26 @@ app.get("/api/rooms", async (req, res) => {
 
 
 /**
- * Get messages for a room (with pagination)
+ * Get messages for a room (with pagination).
+ * If userId query is provided, verifies the user is a member of the room.
  */
 app.get('/api/messages/:roomId', async (req, res) => {
   try {
     const { roomId } = req.params;
-    const limit = parseInt(req.query.limit) || 50;
-    const before = req.query.before; // timestamp for pagination
-    
+    const userId = req.query.userId;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+    const before = req.query.before;
+
+    if (userId) {
+      const member = await pool.query(
+        'SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2 LIMIT 1',
+        [roomId, userId]
+      );
+      if (member.rows.length === 0) {
+        return res.status(403).json({ error: 'Not a member of this room' });
+      }
+    }
+
     let query = `
       SELECT 
         m.id, m.content, m.message_type, m.created_at, m.edited, m.sender_id,
@@ -163,17 +175,16 @@ app.get('/api/messages/:roomId', async (req, res) => {
       WHERE m.room_id = $1
         AND m.deleted = FALSE
     `;
-    
     const params = [roomId];
-    
+
     if (before) {
       query += ` AND m.created_at < $2`;
       params.push(before);
     }
-    
+
     query += ` ORDER BY m.created_at DESC LIMIT $${params.length + 1}`;
     params.push(limit);
-    
+
     const result = await pool.query(query, params);
 
     const normalized = result.rows.map((m) => ({
@@ -187,9 +198,7 @@ app.get('/api/messages/:roomId', async (req, res) => {
       timestamp: new Date(m.created_at).getTime(),
     }));
 
-    // Return oldest first
     res.json({ messages: normalized.reverse() });
-
   } catch (err) {
     console.error('Get messages error:', err);
     res.status(500).json({ error: 'Failed to get messages' });
@@ -270,15 +279,19 @@ app.get('/api/contacts', async (req, res) => {
     }
 
     const result = await pool.query(`
-      SELECT 
-        u.id, u.email, u.name, u.status, u.last_seen,
-        c.status as contact_status
-      FROM users u
-      JOIN contacts c ON (u.id = c.contact_id OR u.id = c.user_id)
-      WHERE (c.user_id = $1 OR c.contact_id = $1)
-        AND c.status = 'accepted'
-        AND u.id != $1
-      ORDER BY u.status DESC, u.last_seen DESC
+      SELECT sub.id, sub.email, sub.name, sub.status, sub.last_seen, sub.contact_status
+      FROM (
+        SELECT DISTINCT ON (u.id)
+          u.id, u.email, u.name, u.status, u.last_seen,
+          c.status as contact_status
+        FROM users u
+        JOIN contacts c ON (u.id = c.contact_id OR u.id = c.user_id)
+        WHERE (c.user_id = $1 OR c.contact_id = $1)
+          AND c.status = 'accepted'
+          AND u.id != $1
+        ORDER BY u.id, u.status DESC NULLS LAST, u.last_seen DESC NULLS LAST
+      ) sub
+      ORDER BY sub.status DESC NULLS LAST, sub.last_seen DESC NULLS LAST
     `, [userId]);
     
     res.json({ contacts: result.rows });
@@ -355,6 +368,34 @@ app.post("/api/rooms/join", async (req, res) => {
   } catch (err) {
     console.error("Join room error:", err);
     res.status(500).json({ error: "Failed to join room" });
+  }
+});
+
+/**
+ * Leave room (or "delete chat" for user) – removes only this user from the room.
+ * Room and messages stay for others.
+ */
+app.post("/api/rooms/leave", async (req, res) => {
+  try {
+    const { userId, roomId } = req.body;
+
+    if (!userId || !roomId) {
+      return res.status(400).json({ error: "userId and roomId required" });
+    }
+
+    const result = await pool.query(
+      "DELETE FROM room_members WHERE room_id = $1 AND user_id = $2 RETURNING id",
+      [roomId, userId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Not a member of this room" });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Leave room error:", err);
+    res.status(500).json({ error: "Failed to leave room" });
   }
 });
 
@@ -507,16 +548,20 @@ app.post('/api/contacts/accept', async (req, res) => {
 app.post('/api/contacts/reject', async (req, res) => {
   try {
     const { requestId, userId } = req.body;
-    
+
     if (!requestId || !userId) {
       return res.status(400).json({ error: 'requestId and userId required' });
     }
 
-    await pool.query(
-      'DELETE FROM contacts WHERE id = $1',
-      [requestId]
+    const result = await pool.query(
+      'DELETE FROM contacts WHERE id = $1 AND contact_id = $2 AND status = $3 RETURNING id',
+      [requestId, userId, 'pending']
     );
-    
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Request not found' });
+    }
+
     res.json({ success: true });
   } catch (err) {
     console.error('Reject contact error:', err);

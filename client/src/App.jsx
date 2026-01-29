@@ -53,6 +53,14 @@ function App() {
   const [createRoomName, setCreateRoomName] = useState("");
   const [joinRoomId, setJoinRoomId] = useState("");
 
+  // Invite link from URL (e.g. opened /invite/roomId)
+  const [inviteRoomIdFromLink, setInviteRoomIdFromLink] = useState(null);
+
+  // Chat menu (delete/leave)
+  const [showChatMenu, setShowChatMenu] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [leaveConfirmRoomId, setLeaveConfirmRoomId] = useState(null);
+
   // Profile state
   const [profilePicture, setProfilePicture] = useState(null);
   const [profilePicturePreview, setProfilePicturePreview] = useState(null);
@@ -60,6 +68,8 @@ function App() {
   const [newDisplayName, setNewDisplayName] = useState("");
 
   const messagesEndRef = useRef(null);
+  const selectedRoomRef = useRef(null);
+  selectedRoomRef.current = selectedRoom;
 
   const [activityTick, setActivityTick] = useState(0);
   useEffect(() => {
@@ -138,7 +148,6 @@ function App() {
   const logout = async () => {
     try {
       await account.deleteSession("current");
-      // Clear all chat/UI state so nothing shows below auth form after logout
       setUser(null);
       setRooms([]);
       setMessages([]);
@@ -151,9 +160,13 @@ function App() {
       setSearchEmail("");
       setInviteSearchResults([]);
       setInviteEmail("");
+      setInviteRoomIdFromLink(null);
       setShowCreateRoom(false);
       setShowInviteModal(false);
       setShowEditRoomModal(false);
+      setShowChatMenu(false);
+      setShowLeaveConfirm(false);
+      setLeaveConfirmRoomId(null);
       setTypingUsers(new Set());
       if (wsRef.current) wsRef.current.close();
     } catch (err) {
@@ -163,6 +176,11 @@ function App() {
 
   useEffect(() => {
     account.get().then(setUser).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const match = window.location.pathname.match(/^\/invite\/([^/]+)\/?$/);
+    if (match) setInviteRoomIdFromLink(match[1].trim());
   }, []);
 
   // ====================================
@@ -175,7 +193,13 @@ function App() {
   };
 
   const handleSocketMessage = (event) => {
-    const msg = JSON.parse(event.data);
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (!msg?.type) return;
 
     switch (msg.type) {
       case "JOINED_ROOM":
@@ -183,6 +207,16 @@ function App() {
         break;
 
       case "ROOM_MESSAGE":
+        if (msg.payload?.roomId !== selectedRoomRef.current) {
+          setRooms((prev) =>
+            prev.map((r) =>
+              r.id === msg.payload.roomId
+                ? { ...r, last_message_at: new Date().toISOString() }
+                : r
+            )
+          );
+          break;
+        }
         setMessages((prev) => [...prev, msg.payload]);
         setRooms((prev) =>
           prev.map((r) =>
@@ -193,8 +227,9 @@ function App() {
         );
         break;
 
-      case "USER_TYPING":{
-        const { userId, typing } = msg.payload;
+      case "USER_TYPING": {
+        const { userId, typing, roomId } = msg.payload || {};
+        if (roomId !== selectedRoomRef.current) break;
         setTypingUsers((prev) => {
           const newSet = new Set(prev);
           if (typing) {
@@ -207,8 +242,8 @@ function App() {
         break;
       }
 
-      case "USER_STATUS":{
-        const { userId: statusUserId, status } = msg.payload;
+      case "USER_STATUS": {
+        const { userId: statusUserId, status } = msg.payload || {};
         setOnlineUsers((prev) => {
           const newSet = new Set(prev);
           if (status === "online") {
@@ -265,13 +300,19 @@ function App() {
   };
 
   const loadMessages = async (roomId) => {
+    if (!roomId || !user?.$id) return;
     try {
       setIsLoadingMessages(true);
-      const res = await fetch(`${API_URL}/api/messages/${roomId}?limit=50`);
+      const res = await fetch(`${API_URL}/api/messages/${roomId}?limit=50&userId=${encodeURIComponent(user.$id)}`);
       const data = await res.json();
-      setMessages(data.messages || []);
+      if (!res.ok) {
+        if (selectedRoomRef.current === roomId) setMessages([]);
+        return;
+      }
+      if (selectedRoomRef.current === roomId) setMessages(data.messages || []);
     } catch (err) {
       console.error("Failed to load messages:", err);
+      if (selectedRoomRef.current === roomId) setMessages([]);
     } finally {
       setIsLoadingMessages(false);
     }
@@ -321,6 +362,7 @@ function App() {
     );
 
     setSelectedRoom(roomId);
+    setTypingUsers(new Set());
     loadMessages(roomId);
   };
 
@@ -471,12 +513,13 @@ function App() {
     if (room.type === "dm") {
       return room.dm_name || room.dm_email || "Direct Message";
     }
-    return room.name || `Room ${room.id.slice(0, 8)}`;
+    return room.name || (room.id ? `Room ${String(room.id).slice(0, 8)}` : "Group");
   };
 
   const formatLastActivity = (isoDate) => {
     if (!isoDate) return "No messages yet";
     const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime())) return "No messages yet";
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);
@@ -534,21 +577,34 @@ function App() {
     joinRoom(data.roomId);
   };
 
-  const joinRoomById = async () => {
-    if (!joinRoomId.trim()) return alert("Enter room ID");
+  const extractRoomIdFromInviteInput = (input) => {
+    const trimmed = (input || "").trim();
+    const match = trimmed.match(/\/invite\/([^/?#]+)/);
+    return match ? match[1].trim() : trimmed;
+  };
+
+  const joinRoomById = async (roomIdFromInput) => {
+    const roomIdToUse = roomIdFromInput !== undefined
+      ? extractRoomIdFromInviteInput(roomIdFromInput)
+      : extractRoomIdFromInviteInput(joinRoomId);
+    if (!roomIdToUse) return alert("Enter room ID or paste invite link");
 
     const res = await fetch(`${API_URL}/api/rooms/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user.$id, roomId: joinRoomId }),
+      body: JSON.stringify({ userId: user.$id, roomId: roomIdToUse }),
     });
 
     const data = await res.json();
     if (!res.ok) return alert(data.error || "Join room failed");
 
     setJoinRoomId("");
+    setInviteRoomIdFromLink(null);
+    if (typeof window !== "undefined" && window.history.replaceState) {
+      window.history.replaceState({}, "", window.location.pathname.replace(/\/invite\/[^/]+/?$/, "") || "/");
+    }
     await loadRooms();
-    joinRoom(joinRoomId.trim());
+    joinRoom(roomIdToUse);
   };
 
   const generateInviteLink = () => {
@@ -595,6 +651,29 @@ function App() {
     } catch (err) {
       console.error("Invite user error:", err);
       alert("Failed to invite user");
+    }
+  };
+
+  const leaveRoomById = async (roomIdToLeave) => {
+    if (!roomIdToLeave) return;
+    try {
+      const res = await fetch(`${API_URL}/api/rooms/leave`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.$id, roomId: roomIdToLeave }),
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || "Failed to leave room");
+      setShowLeaveConfirm(false);
+      setLeaveConfirmRoomId(null);
+      setShowChatMenu(false);
+      setSelectedRoom(null);
+      setMessages([]);
+      setMessageInput("");
+      await loadRooms();
+    } catch (err) {
+      console.error("Leave room error:", err);
+      alert("Failed to leave room");
     }
   };
 
@@ -1196,6 +1275,28 @@ function App() {
 
       {/* CHAT AREA */}
       <div style={styles.chatArea}>
+        {inviteRoomIdFromLink && user && (
+          <div style={styles.inviteBanner}>
+            <span style={styles.inviteBannerText}>You're invited to join a group.</span>
+            <div style={styles.inviteBannerActions}>
+              <button style={styles.inviteBannerJoin} onClick={() => joinRoomById(inviteRoomIdFromLink)}>
+                Join
+              </button>
+              <button
+                style={styles.inviteBannerDismiss}
+                onClick={() => {
+                  setInviteRoomIdFromLink(null);
+                  if (window.history.replaceState) {
+                    window.history.replaceState({}, "", window.location.pathname.replace(/\/invite\/[^/]+/?$/, "") || "/");
+                  }
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
         {!selectedRoom ? (
           <div style={styles.welcomeScreen}>
             <div style={styles.welcomeIcon}>💬</div>
@@ -1224,31 +1325,92 @@ function App() {
                 </div>
               </div>
 
-              {selectedRoomData?.type === "group" && (
-                <div style={styles.headerActions}>
+              <div style={styles.headerActions}>
+                {selectedRoomData?.type === "group" && (
+                  <>
+                    <button
+                      style={styles.headerBtn}
+                      onClick={() => {
+                        setEditRoomName(selectedRoomData.name || "");
+                        setShowEditRoomModal(true);
+                      }}
+                      title="Edit Room"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      style={styles.headerBtn}
+                      onClick={() => {
+                        setShowInviteModal(true);
+                        generateInviteLink();
+                      }}
+                      title="Invite Users"
+                    >
+                      ➕
+                    </button>
+                  </>
+                )}
+                <div style={styles.headerMenuWrap}>
                   <button
                     style={styles.headerBtn}
-                    onClick={() => {
-                      setEditRoomName(selectedRoomData.name || "");
-                      setShowEditRoomModal(true);
-                    }}
-                    title="Edit Room"
+                    onClick={() => setShowChatMenu(!showChatMenu)}
+                    title={selectedRoomData?.type === "dm" ? "Delete chat" : "Leave group"}
                   >
-                    ✏️
+                    ⋮
                   </button>
-                  <button
-                    style={styles.headerBtn}
-                    onClick={() => {
-                      setShowInviteModal(true);
-                      generateInviteLink();
-                    }}
-                    title="Invite Users"
-                  >
-                    ➕
-                  </button>
+                  {showChatMenu && (
+                    <>
+                      <div style={styles.menuBackdrop} onClick={() => setShowChatMenu(false)} />
+                      <div style={styles.chatMenu}>
+                        <button
+                          style={styles.chatMenuItem}
+                          onClick={() => {
+                            setShowChatMenu(false);
+                            setLeaveConfirmRoomId(selectedRoom);
+                            setShowLeaveConfirm(true);
+                          }}
+                        >
+                          {selectedRoomData?.type === "dm" ? "Delete chat" : "Leave group"}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
+
+            {showLeaveConfirm && leaveConfirmRoomId && (() => {
+              const roomToLeave = rooms.find((r) => r.id === leaveConfirmRoomId);
+              const isDm = roomToLeave?.type === "dm";
+              return (
+                <div style={styles.modalOverlay} onClick={() => { setShowLeaveConfirm(false); setLeaveConfirmRoomId(null); }}>
+                  <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                    <div style={styles.modalHeader}>
+                      <h3 style={styles.modalTitle}>{isDm ? "Delete chat?" : "Leave group?"}</h3>
+                      <button style={styles.closeBtn} onClick={() => { setShowLeaveConfirm(false); setLeaveConfirmRoomId(null); }}>✕</button>
+                    </div>
+                    <div style={styles.modalBody}>
+                      <p style={styles.leaveConfirmText}>
+                        {isDm
+                          ? "This will remove this chat from your list. The other person can still see the conversation."
+                          : "You will leave this group. Others will stay. You can rejoin with an invite link."}
+                      </p>
+                      <div style={styles.leaveConfirmActions}>
+                        <button style={styles.cancelButton} onClick={() => { setShowLeaveConfirm(false); setLeaveConfirmRoomId(null); }}>
+                          Cancel
+                        </button>
+                        <button
+                          style={styles.deleteButton}
+                          onClick={() => leaveRoomById(leaveConfirmRoomId)}
+                        >
+                          {isDm ? "Delete chat" : "Leave group"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             <div style={styles.messagesArea}>
               {isLoadingMessages ? (
@@ -2128,6 +2290,99 @@ const styles = {
     fontSize: "16px",
     cursor: "pointer",
     transition: "all 0.2s",
+  },
+  headerMenuWrap: {
+    position: "relative",
+  },
+  menuBackdrop: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 99,
+  },
+  chatMenu: {
+    position: "absolute",
+    top: "100%",
+    right: 0,
+    marginTop: "4px",
+    background: "white",
+    borderRadius: "8px",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+    padding: "4px 0",
+    zIndex: 100,
+    minWidth: "140px",
+  },
+  chatMenuItem: {
+    display: "block",
+    width: "100%",
+    padding: "10px 16px",
+    border: "none",
+    background: "none",
+    fontSize: "14px",
+    color: "#ef4444",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  inviteBanner: {
+    padding: "12px 20px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: "12px",
+  },
+  inviteBannerText: {
+    margin: 0,
+    fontSize: "14px",
+    fontWeight: "500",
+  },
+  inviteBannerActions: {
+    display: "flex",
+    gap: "8px",
+  },
+  inviteBannerJoin: {
+    padding: "8px 16px",
+    background: "white",
+    color: "#667eea",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  inviteBannerDismiss: {
+    padding: "8px 16px",
+    background: "rgba(255,255,255,0.2)",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "13px",
+    cursor: "pointer",
+  },
+  leaveConfirmText: {
+    margin: "0 0 20px",
+    fontSize: "14px",
+    color: "#64748b",
+    lineHeight: 1.5,
+  },
+  leaveConfirmActions: {
+    display: "flex",
+    gap: "12px",
+    justifyContent: "flex-end",
+  },
+  deleteButton: {
+    padding: "12px 24px",
+    background: "#ef4444",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "14px",
+    fontWeight: "600",
+    cursor: "pointer",
   },
 
   messagesArea: {
