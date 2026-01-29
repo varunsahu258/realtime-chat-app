@@ -118,28 +118,18 @@ app.get("/api/rooms", async (req, res) => {
 
         MAX(m.created_at) AS last_message_at,
 
-        -- DM partner (other member)
-        u2.id AS dm_user_id,
-        u2.email AS dm_email,
-        u2.name AS dm_name
+        (SELECT u2.id FROM room_members rm2 JOIN users u2 ON u2.id = rm2.user_id
+         WHERE rm2.room_id = r.id AND rm2.user_id != $1 LIMIT 1) AS dm_user_id,
+        (SELECT u2.email FROM room_members rm2 JOIN users u2 ON u2.id = rm2.user_id
+         WHERE rm2.room_id = r.id AND rm2.user_id != $1 LIMIT 1) AS dm_email,
+        (SELECT u2.name FROM room_members rm2 JOIN users u2 ON u2.id = rm2.user_id
+         WHERE rm2.room_id = r.id AND rm2.user_id != $1 LIMIT 1) AS dm_name
 
       FROM rooms r
-      JOIN room_members rm ON r.id = rm.room_id
+      JOIN room_members rm ON r.id = rm.room_id AND rm.user_id = $1
+      LEFT JOIN messages m ON r.id = m.room_id AND m.deleted = FALSE
 
-      LEFT JOIN messages m ON r.id = m.room_id
-
-      LEFT JOIN room_members rm2
-        ON r.id = rm2.room_id
-       AND rm2.user_id != $1
-
-      LEFT JOIN users u2 ON u2.id = rm2.user_id
-
-      WHERE rm.user_id = $1
-
-      GROUP BY
-        r.id, r.name, r.type, r.updated_at,
-        rm.last_read_at,
-        u2.id, u2.email, u2.name
+      GROUP BY r.id, r.name, r.type, r.updated_at, rm.last_read_at
 
       ORDER BY last_message_at DESC NULLS LAST
     `,

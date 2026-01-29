@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { account } from "./appwrite";
 import { ID } from "appwrite";
 
@@ -60,6 +60,12 @@ function App() {
   const [newDisplayName, setNewDisplayName] = useState("");
 
   const messagesEndRef = useRef(null);
+
+  const [activityTick, setActivityTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setActivityTick((t) => t + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -132,6 +138,7 @@ function App() {
   const logout = async () => {
     try {
       await account.deleteSession("current");
+      // Clear all chat/UI state so nothing shows below auth form after logout
       setUser(null);
       setRooms([]);
       setMessages([]);
@@ -139,6 +146,15 @@ function App() {
       setContactRequests([]);
       setSelectedRoom(null);
       setActiveView("rooms");
+      setMessageInput("");
+      setSearchResults([]);
+      setSearchEmail("");
+      setInviteSearchResults([]);
+      setInviteEmail("");
+      setShowCreateRoom(false);
+      setShowInviteModal(false);
+      setShowEditRoomModal(false);
+      setTypingUsers(new Set());
       if (wsRef.current) wsRef.current.close();
     } catch (err) {
       console.error("Logout error:", err);
@@ -457,6 +473,44 @@ function App() {
     }
     return room.name || `Room ${room.id.slice(0, 8)}`;
   };
+
+  const formatLastActivity = (isoDate) => {
+    if (!isoDate) return "No messages yet";
+    const date = new Date(isoDate);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    if (diffMins < 1) return "just now";
+    if (diffMins < 60) {
+      if (diffMins < 5) return "5 min ago";
+      if (diffMins < 15) return "15 min ago";
+      if (diffMins < 30) return "30 min ago";
+      return "1 hr ago";
+    }
+    if (diffHours < 24) return `${diffHours} hr ago`;
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return `${diffDays} days ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} wk ago`;
+    return date.toLocaleDateString();
+  };
+
+  const roomsSortedByLastMessage = [...rooms]
+    .filter((r, i, arr) => arr.findIndex((x) => x.id === r.id) === i)
+    .sort((a, b) => {
+      const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+      const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+      return tb - ta;
+    });
+
+  const roomLastActivityLabels = useMemo(() => {
+    const map = {};
+    rooms.forEach((room) => {
+      map[room.id] = formatLastActivity(room.last_message_at);
+    });
+    return map;
+  }, [rooms, activityTick]);
 
   // ====================================
   // Group Room Functions
@@ -985,14 +1039,14 @@ function App() {
             )}
 
             <div style={styles.roomsList}>
-              {rooms.length === 0 ? (
+              {roomsSortedByLastMessage.length === 0 ? (
                 <div style={styles.emptyState}>
                   <div style={styles.emptyIcon}>📭</div>
                   <p style={styles.emptyText}>No chats yet</p>
                   <p style={styles.emptySubtext}>Start a conversation!</p>
                 </div>
               ) : (
-                rooms.map((room) => (
+                roomsSortedByLastMessage.map((room) => (
                   <div
                     key={room.id}
                     style={{
@@ -1012,7 +1066,7 @@ function App() {
                         )}
                       </div>
                       <div style={styles.roomPreview}>
-                        {room.last_message_at ? new Date(room.last_message_at).toLocaleDateString() : "No messages yet"}
+                        {roomLastActivityLabels[room.id]}
                       </div>
                     </div>
                   </div>
@@ -1402,11 +1456,14 @@ function App() {
 const styles = {
   authContainer: {
     minHeight: "100vh",
+    height: "100vh",
+    overflow: "auto",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
     padding: "20px",
+    boxSizing: "border-box",
   },
   authBox: {
     background: "white",
