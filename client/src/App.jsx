@@ -601,8 +601,11 @@ function App() {
     setJoinRoomId("");
     setInviteRoomIdFromLink(null);
     if (typeof window !== "undefined" && window.history.replaceState) {
-      window.history.replaceState({}, "", window.location.pathname.replace(/\/invite\/[^/]+/?$/, "") || "/");
-    }
+      window.history.replaceState(
+        {},
+        "",
+        window.location.pathname.replace(/\/invite\/[^/]+\/?$/, "") || "/"
+      );    }
     await loadRooms();
     joinRoom(roomIdToUse);
   };
@@ -1287,8 +1290,11 @@ function App() {
                 onClick={() => {
                   setInviteRoomIdFromLink(null);
                   if (window.history.replaceState) {
-                    window.history.replaceState({}, "", window.location.pathname.replace(/\/invite\/[^/]+/?$/, "") || "/");
-                  }
+                    window.history.replaceState(
+                      {},
+                      "",
+                      window.location.pathname.replace(/\/invite\/[^/]+\/?$/, "") || "/"
+                    );                  }
                 }}
               >
                 Dismiss
