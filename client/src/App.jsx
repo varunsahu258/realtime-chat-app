@@ -603,6 +603,9 @@ function App() {
                     <div style={styles.listItemTitle}>
                       {getRoomTitle(room)}
                     </div>
+                    <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
+                      ID: {room.id}
+                    </div>
                     {room.unread_count > 0 && (
                       <span style={styles.badge}>{room.unread_count}</span>
                     )}
