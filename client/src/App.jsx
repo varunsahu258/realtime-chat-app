@@ -437,6 +437,18 @@ function App() {
     joinRoom(joinRoomId.trim());
   };
 
+  //COPY ROOM ID FUNCTION
+    const copyRoomId = async (roomId) => {
+    try {
+      await navigator.clipboard.writeText(roomId);
+      alert("✅ Room ID copied!");
+    } catch (err) {
+      console.error("Copy failed:", err);
+      alert("❌ Copy failed. Please copy manually.");
+    }
+  };
+
+
   // ====================================
   // RENDER: AUTH UI
   // ====================================
@@ -603,9 +615,6 @@ function App() {
                     <div style={styles.listItemTitle}>
                       {getRoomTitle(room)}
                     </div>
-                    <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
-                      ID: {room.id}
-                    </div>
                     {room.unread_count > 0 && (
                       <span style={styles.badge}>{room.unread_count}</span>
                     )}
@@ -703,18 +712,42 @@ function App() {
           <>
             {/* Chat Header */}
             <div style={styles.chatHeader}>
-              <div>
-                <div style={styles.chatTitle}>
-                  {getRoomTitle(selectedRoomData)}
-                </div>
-                {typingUsers.size > 0 && (
-                  <div style={styles.typingIndicator}>
-                    {typingUsers.size === 1 ? "Someone is" : `${typingUsers.size} people are`}{" "}
-                    typing...
+              <div style={styles.chatHeaderRow}>
+                <div>
+                  <div style={styles.chatTitle}>
+                    {getRoomTitle(selectedRoomData)}
                   </div>
+
+                  {/* ✅ Show Room ID only for group rooms */}
+                  {selectedRoomData?.type === "group" && (
+                    <div style={styles.roomIdText}>
+                      Room ID: {selectedRoom}
+                    </div>
+                  )}
+
+                  {typingUsers.size > 0 && (
+                    <div style={styles.typingIndicator}>
+                      {typingUsers.size === 1
+                        ? "Someone is"
+                        : `${typingUsers.size} people are`}{" "}
+                      typing...
+                    </div>
+                  )}
+                </div>
+
+                {/* ✅ Copy button only for group rooms */}
+                {selectedRoomData?.type === "group" && (
+                  <button
+                    style={styles.copyRoomButton}
+                    onClick={() => copyRoomId(selectedRoom)}
+                    title="Copy Room ID"
+                  >
+                    📋 Copy ID
+                  </button>
                 )}
               </div>
             </div>
+
 
             {/* Messages */}
             <div style={styles.messagesContainer}>
@@ -1162,6 +1195,30 @@ const styles = {
     cursor: "pointer",
     fontWeight: "600",
   },
+  chatHeaderRow: {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: "12px",
+},
+
+copyRoomButton: {
+  padding: "8px 12px",
+  background: "#f0f0f0",
+  border: "none",
+  borderRadius: "8px",
+  cursor: "pointer",
+  fontSize: "13px",
+  fontWeight: "600",
+  whiteSpace: "nowrap",
+},
+
+roomIdText: {
+  fontSize: "11px",
+  color: "#777",
+  marginTop: "4px",
+  wordBreak: "break-all",
+},
 };
 
 export default App;
