@@ -96,33 +96,63 @@ app.get('/api/users/search', async (req, res) => {
 /**
  * Get user's rooms with unread counts
  */
-app.get('/api/rooms', async (req, res) => {
+app.get("/api/rooms", async (req, res) => {
   try {
     const { userId } = req.query;
-    
+
     if (!userId) {
-      return res.status(400).json({ error: 'userId parameter required' });
+      return res.status(400).json({ error: "userId parameter required" });
     }
 
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       SELECT 
-        r.id, r.name, r.type, r.updated_at,
-        COUNT(m.id) FILTER (WHERE m.created_at > rm.last_read_at AND m.deleted = FALSE) as unread_count,
-        MAX(m.created_at) as last_message_at
+        r.id,
+        r.name,
+        r.type,
+        r.updated_at,
+
+        COUNT(m.id) FILTER (
+          WHERE m.created_at > rm.last_read_at AND m.deleted = FALSE
+        ) AS unread_count,
+
+        MAX(m.created_at) AS last_message_at,
+
+        -- DM partner (other member)
+        u2.id AS dm_user_id,
+        u2.email AS dm_email,
+        u2.name AS dm_name
+
       FROM rooms r
       JOIN room_members rm ON r.id = rm.room_id
+
       LEFT JOIN messages m ON r.id = m.room_id
+
+      LEFT JOIN room_members rm2
+        ON r.id = rm2.room_id
+       AND rm2.user_id != $1
+
+      LEFT JOIN users u2 ON u2.id = rm2.user_id
+
       WHERE rm.user_id = $1
-      GROUP BY r.id, r.name, r.type, r.updated_at, rm.last_read_at
+
+      GROUP BY
+        r.id, r.name, r.type, r.updated_at,
+        rm.last_read_at,
+        u2.id, u2.email, u2.name
+
       ORDER BY last_message_at DESC NULLS LAST
-    `, [userId]);
-    
+    `,
+      [userId]
+    );
+
     res.json({ rooms: result.rows });
   } catch (err) {
-    console.error('Get rooms error:', err);
-    res.status(500).json({ error: 'Failed to get rooms' });
+    console.error("Get rooms error:", err);
+    res.status(500).json({ error: "Failed to get rooms" });
   }
 });
+
 
 /**
  * Get messages for a room (with pagination)

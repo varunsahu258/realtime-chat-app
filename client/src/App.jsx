@@ -368,6 +368,16 @@ function App() {
       console.error("Start DM error:", err);
     }
   };
+  //Room title
+  const getRoomTitle = (room) => {
+    if (!room) return "Chat";
+
+    if (room.type === "dm") {
+      return room.dm_name || room.dm_email || "Direct Message";
+    }
+
+    return room.name || `Room ${room.id.slice(0, 8)}`;
+  };
 
   // ====================================
   // RENDER: AUTH UI
@@ -478,8 +488,7 @@ function App() {
                 >
                   <div style={styles.listItemContent}>
                     <div style={styles.listItemTitle}>
-                      {room.name || `Room ${room.id.slice(0, 8)}`}
-                      {room.type === "dm" && " (DM)"}
+                      {getRoomTitle(room)}
                     </div>
                     {room.unread_count > 0 && (
                       <span style={styles.badge}>{room.unread_count}</span>
@@ -580,7 +589,7 @@ function App() {
             <div style={styles.chatHeader}>
               <div>
                 <div style={styles.chatTitle}>
-                  {selectedRoomData?.name || `Room ${selectedRoom.slice(0, 8)}`}
+                  {getRoomTitle(selectedRoomData)}
                 </div>
                 {typingUsers.size > 0 && (
                   <div style={styles.typingIndicator}>
