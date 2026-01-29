@@ -286,6 +286,77 @@ app.get('/api/contacts', async (req, res) => {
   }
 });
 
+//Join Room + Create Room options
+
+app.post("/api/rooms/create", async (req, res) => {
+  try {
+    const { userId, name } = req.body;
+
+    if (!userId || !name?.trim()) {
+      return res.status(400).json({ error: "userId and name required" });
+    }
+
+    const roomId = crypto.randomUUID();
+
+    await pool.query("BEGIN");
+
+    try {
+      await pool.query(
+        "INSERT INTO rooms (id, name, type, created_by) VALUES ($1, $2, $3, $4)",
+        [roomId, name.trim(), "group", userId]
+      );
+
+      await pool.query(
+        "INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)",
+        [roomId, userId]
+      );
+
+      await pool.query("COMMIT");
+
+      res.json({ roomId });
+    } catch (err) {
+      await pool.query("ROLLBACK");
+      throw err;
+    }
+  } catch (err) {
+    console.error("Create room error:", err);
+    res.status(500).json({ error: "Failed to create room" });
+  }
+});
+
+app.post("/api/rooms/join", async (req, res) => {
+  try {
+    const { userId, roomId } = req.body;
+
+    if (!userId || !roomId) {
+      return res.status(400).json({ error: "userId and roomId required" });
+    }
+
+    const exists = await pool.query("SELECT id FROM rooms WHERE id = $1", [
+      roomId,
+    ]);
+
+    if (exists.rows.length === 0) {
+      return res.status(404).json({ error: "Room not found" });
+    }
+
+    await pool.query(
+      `
+      INSERT INTO room_members (room_id, user_id)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
+    `,
+      [roomId, userId]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Join room error:", err);
+    res.status(500).json({ error: "Failed to join room" });
+  }
+});
+
+
 /**
  * Send contact request (auto-accept for simplicity)
  */

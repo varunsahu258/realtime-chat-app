@@ -6,6 +6,7 @@ import { ID } from "appwrite";
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3000";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
+
 function App() {
   const wsRef = useRef(null);
 
@@ -36,6 +37,9 @@ function App() {
   // Online status
   const [onlineUsers, setOnlineUsers] = useState(new Set());
 
+  //Group Rooms state
+  const [createRoomName, setCreateRoomName] = useState("");
+  const [joinRoomId, setJoinRoomId] = useState("");
   
   // ====================================
   // AUTH FUNCTIONS
@@ -380,6 +384,44 @@ function App() {
   };
 
   // ====================================
+  // Group Room Functions
+  // ====================================
+
+  const createRoom = async () => {
+  if (!createRoomName.trim()) return alert("Enter room name");
+
+  const res = await fetch(`${API_URL}/api/rooms/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: user.$id, name: createRoomName }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) return alert(data.error || "Create room failed");
+
+  setCreateRoomName("");
+  await loadRooms();
+  joinRoom(data.roomId);
+};
+
+  const joinRoomById = async () => {
+    if (!joinRoomId.trim()) return alert("Enter room ID");
+
+    const res = await fetch(`${API_URL}/api/rooms/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: user.$id, roomId: joinRoomId }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Join room failed");
+
+    setJoinRoomId("");
+    await loadRooms();
+    joinRoom(joinRoomId.trim());
+  };
+
+  // ====================================
   // RENDER: AUTH UI
   // ====================================
 
@@ -472,6 +514,38 @@ function App() {
                 🔄
               </button>
             </div>
+            <div style={{ padding: "12px", background: "white", borderBottom: "1px solid #e0e0e0" }}>
+            <div style={{ fontSize: "12px", fontWeight: "600", marginBottom: "6px", color: "#666" }}>
+              Group Rooms
+            </div>
+
+            {/* Create Room */}
+            <div style={{ display: "flex", gap: "6px", marginBottom: "8px" }}>
+              <input
+                style={styles.searchInput}
+                placeholder="Room name"
+                value={createRoomName}
+                onChange={(e) => setCreateRoomName(e.target.value)}
+              />
+              <button style={styles.searchButton} onClick={createRoom}>
+                ➕
+              </button>
+            </div>
+
+            {/* Join Room */}
+            <div style={{ display: "flex", gap: "6px" }}>
+              <input
+                style={styles.searchInput}
+                placeholder="Enter Room ID"
+                value={joinRoomId}
+                onChange={(e) => setJoinRoomId(e.target.value)}
+              />
+              <button style={styles.searchButton} onClick={joinRoomById}>
+                🔗
+              </button>
+            </div>
+          </div>
+
             {rooms.length === 0 ? (
               <div style={styles.emptyState}>
                 No chats yet. Add a contact to start chatting!
