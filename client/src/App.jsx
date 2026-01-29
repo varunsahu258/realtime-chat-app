@@ -2,10 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { account } from "./appwrite";
 import { ID } from "appwrite";
 
-
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3000";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-
 
 function App() {
   const wsRef = useRef(null);
@@ -14,10 +12,13 @@ function App() {
   const [user, setUser] = useState(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [authMode, setAuthMode] = useState("login");
 
   // UI state
-  const [activeView, setActiveView] = useState("rooms"); // rooms, contacts, settings
+  const [activeView, setActiveView] = useState("rooms");
   const [selectedRoom, setSelectedRoom] = useState(null);
+  const [showCreateRoom, setShowCreateRoom] = useState(false);
   
   // Chat state
   const [rooms, setRooms] = useState([]);
@@ -37,51 +38,50 @@ function App() {
   // Online status
   const [onlineUsers, setOnlineUsers] = useState(new Set());
 
-  //Group Rooms state
+  // Group Rooms state
   const [createRoomName, setCreateRoomName] = useState("");
   const [joinRoomId, setJoinRoomId] = useState("");
-  
-  //SIGNUP STATE
-  const [authMode, setAuthMode] = useState("login"); // login | signup
-  const [name, setName] = useState("");
 
+  const messagesEndRef = useRef(null);
 
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   // ====================================
   // AUTH FUNCTIONS
   // ====================================
 
-  
-    const signup = async () => {
-      try {
-        if (!name.trim()) {
-          alert("Please enter your name");
-          return;
-        }
-
-        await account.create(ID.unique(), email, password, name);
-
-        // Create session (Appwrite SDK compatibility)
-        if (typeof account.createEmailPasswordSession === "function") {
-          await account.createEmailPasswordSession(email, password);
-        } else if (typeof account.createSession === "function") {
-          await account.createSession(email, password);
-        } else if (typeof account.createEmailSession === "function") {
-          await account.createEmailSession(email, password);
-        } else {
-          throw new Error("Appwrite SDK missing session creation method");
-        }
-
-        const user = await account.get();
-        setUser(user);
-      } catch (err) {
-        alert("Signup failed: " + (err?.message || err));
-        console.error(err);
+  const signup = async () => {
+    try {
+      if (!name.trim()) {
+        alert("Please enter your name");
+        return;
       }
-    };
 
+      await account.create(ID.unique(), email, password, name);
 
+      if (typeof account.createEmailPasswordSession === "function") {
+        await account.createEmailPasswordSession(email, password);
+      } else if (typeof account.createSession === "function") {
+        await account.createSession(email, password);
+      } else if (typeof account.createEmailSession === "function") {
+        await account.createEmailSession(email, password);
+      } else {
+        throw new Error("Appwrite SDK missing session creation method");
+      }
 
+      const user = await account.get();
+      setUser(user);
+    } catch (err) {
+      alert("Signup failed: " + (err?.message || err));
+      console.error(err);
+    }
+  };
 
   const login = async () => {
     try {
@@ -103,8 +103,6 @@ function App() {
     }
   };
 
-
-
   const logout = async () => {
     try {
       await account.deleteSession("current");
@@ -119,7 +117,6 @@ function App() {
     }
   };
 
-  // Auto-login on refresh
   useEffect(() => {
     account.get().then(setUser).catch(() => {});
   }, []);
@@ -135,7 +132,6 @@ function App() {
 
   const handleSocketMessage = (event) => {
     const msg = JSON.parse(event.data);
-    console.log("WS message:", msg);
 
     switch (msg.type) {
       case "JOINED_ROOM":
@@ -144,7 +140,6 @@ function App() {
 
       case "ROOM_MESSAGE":
         setMessages((prev) => [...prev, msg.payload]);
-        // Update room's last message
         setRooms((prev) =>
           prev.map((r) =>
             r.id === msg.payload.roomId
@@ -181,10 +176,6 @@ function App() {
         });
         break;
       }
-      case "USER_JOINED":
-      case "USER_LEFT":
-        // Optionally show notifications
-        break;
     }
   };
 
@@ -303,7 +294,6 @@ function App() {
       })
     );
 
-    // Auto-stop typing after 3 seconds
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
@@ -378,47 +368,43 @@ function App() {
       const data = await res.json();
       if (data.roomId) {
         setActiveView("rooms");
-        loadRooms(); // Refresh rooms list
+        loadRooms();
         setTimeout(() => joinRoom(data.roomId), 500);
       }
     } catch (err) {
       console.error("Start DM error:", err);
     }
   };
-  //Room title
+
   const getRoomTitle = (room) => {
     if (!room) return "Chat";
-
-    // DM: show other person's name/email instead of room id
     if (room.type === "dm") {
       return room.dm_name || room.dm_email || "Direct Message";
     }
-
-    // Group room: show name or fallback
     return room.name || `Room ${room.id.slice(0, 8)}`;
   };
-
 
   // ====================================
   // Group Room Functions
   // ====================================
 
   const createRoom = async () => {
-  if (!createRoomName.trim()) return alert("Enter room name");
+    if (!createRoomName.trim()) return alert("Enter room name");
 
-  const res = await fetch(`${API_URL}/api/rooms/create`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userId: user.$id, name: createRoomName }),
-  });
+    const res = await fetch(`${API_URL}/api/rooms/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: user.$id, name: createRoomName }),
+    });
 
-  const data = await res.json();
-  if (!res.ok) return alert(data.error || "Create room failed");
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || "Create room failed");
 
-  setCreateRoomName("");
-  await loadRooms();
-  joinRoom(data.roomId);
-};
+    setCreateRoomName("");
+    setShowCreateRoom(false);
+    await loadRooms();
+    joinRoom(data.roomId);
+  };
 
   const joinRoomById = async () => {
     if (!joinRoomId.trim()) return alert("Enter room ID");
@@ -437,8 +423,7 @@ function App() {
     joinRoom(joinRoomId.trim());
   };
 
-  //COPY ROOM ID FUNCTION
-    const copyRoomId = async (roomId) => {
+  const copyRoomId = async (roomId) => {
     try {
       await navigator.clipboard.writeText(roomId);
       alert("✅ Room ID copied!");
@@ -448,64 +433,89 @@ function App() {
     }
   };
 
-
   // ====================================
   // RENDER: AUTH UI
   // ====================================
 
   if (!user) {
-  return (
-    <div style={styles.authContainer}>
-      <div style={styles.authBox}>
-        <h2 style={styles.authTitle}>
-          {authMode === "login" ? "Login" : "Sign Up"}
-        </h2>
+    return (
+      <div style={styles.authContainer}>
+        <div style={styles.authBox}>
+          <div style={styles.authHeader}>
+            <div style={styles.logoContainer}>
+              <div style={styles.logo}>💬</div>
+              <h1 style={styles.appTitle}>ChatFlow</h1>
+            </div>
+            <p style={styles.authSubtitle}>Connect with your team instantly</p>
+          </div>
 
-        {authMode === "signup" && (
-          <input
-            style={styles.input}
-            placeholder="Full Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        )}
+          <div style={styles.authToggle}>
+            <button
+              style={{
+                ...styles.toggleBtn,
+                ...(authMode === "login" ? styles.toggleBtnActive : {}),
+              }}
+              onClick={() => setAuthMode("login")}
+            >
+              Login
+            </button>
+            <button
+              style={{
+                ...styles.toggleBtn,
+                ...(authMode === "signup" ? styles.toggleBtnActive : {}),
+              }}
+              onClick={() => setAuthMode("signup")}
+            >
+              Sign Up
+            </button>
+          </div>
 
-        <input
-          style={styles.input}
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
+          <div style={styles.authForm}>
+            {authMode === "signup" && (
+              <div style={styles.inputGroup}>
+                <label style={styles.inputLabel}>Full Name</label>
+                <input
+                  style={styles.input}
+                  placeholder="John Doe"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+            )}
 
-        <input
-          style={styles.input}
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+            <div style={styles.inputGroup}>
+              <label style={styles.inputLabel}>Email</label>
+              <input
+                style={styles.input}
+                placeholder="you@example.com"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
 
-        <button
-          style={styles.button}
-          onClick={authMode === "login" ? login : signup}
-        >
-          {authMode === "login" ? "Login" : "Create Account"}
-        </button>
+            <div style={styles.inputGroup}>
+              <label style={styles.inputLabel}>Password</label>
+              <input
+                style={styles.input}
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
 
-        <button
-          style={{ ...styles.buttonSecondary, marginTop: "10px" }}
-          onClick={() => {
-            setAuthMode(authMode === "login" ? "signup" : "login");
-          }}
-        >
-          {authMode === "login"
-            ? "New here? Create an account"
-            : "Already have an account? Login"}
-        </button>
+            <button
+              style={styles.authButton}
+              onClick={authMode === "login" ? login : signup}
+            >
+              {authMode === "login" ? "Sign In" : "Create Account"}
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
   // ====================================
   // RENDER: MAIN CHAT UI
@@ -517,184 +527,215 @@ function App() {
     <div style={styles.container}>
       {/* SIDEBAR */}
       <div style={styles.sidebar}>
-        {/* User Header */}
+        {/* User Profile Header */}
         <div style={styles.userHeader}>
-          <div>
-            <div style={styles.userName}>{user.email}</div>
-            <div style={styles.userStatus}>
-              <span style={styles.statusDot}></span> Online
+          <div style={styles.userProfile}>
+            <div style={styles.avatar}>
+              {user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+            </div>
+            <div style={styles.userInfo}>
+              <div style={styles.userName}>{user.name || user.email}</div>
+              <div style={styles.userStatus}>
+                <span style={styles.statusIndicator}></span>
+                Online
+              </div>
             </div>
           </div>
-          <button style={styles.logoutButton} onClick={logout}>
-            Logout
+          <button style={styles.logoutBtn} onClick={logout} title="Logout">
+            ⏻
           </button>
         </div>
 
         {/* Navigation Tabs */}
-        <div style={styles.tabs}>
+        <div style={styles.navTabs}>
           <button
             style={{
-              ...styles.tab,
-              ...(activeView === "rooms" ? styles.tabActive : {}),
+              ...styles.navTab,
+              ...(activeView === "rooms" ? styles.navTabActive : {}),
             }}
             onClick={() => setActiveView("rooms")}
           >
-            💬 Chats
+            <span style={styles.navIcon}>💬</span>
+            <span>Chats</span>
           </button>
           <button
             style={{
-              ...styles.tab,
-              ...(activeView === "contacts" ? styles.tabActive : {}),
+              ...styles.navTab,
+              ...(activeView === "contacts" ? styles.navTabActive : {}),
             }}
             onClick={() => setActiveView("contacts")}
           >
-            👥 Contacts
+            <span style={styles.navIcon}>👥</span>
+            <span>Contacts</span>
           </button>
         </div>
 
         {/* ROOMS VIEW */}
         {activeView === "rooms" && (
-          <div style={styles.list}>
+          <div style={styles.listContainer}>
             <div style={styles.listHeader}>
-              <h3>Your Chats</h3>
+              <h3 style={styles.listTitle}>Messages</h3>
               <button
-                style={styles.refreshButton}
-                onClick={loadRooms}
-                title="Refresh"
+                style={styles.iconBtn}
+                onClick={() => setShowCreateRoom(!showCreateRoom)}
+                title="Create Room"
               >
-                🔄
-              </button>
-            </div>
-            <div style={{ padding: "12px", background: "white", borderBottom: "1px solid #e0e0e0" }}>
-            <div style={{ fontSize: "12px", fontWeight: "600", marginBottom: "6px", color: "#666" }}>
-              Group Rooms
-            </div>
-
-            {/* Create Room */}
-            <div style={{ display: "flex", gap: "6px", marginBottom: "8px" }}>
-              <input
-                style={styles.searchInput}
-                placeholder="Room name"
-                value={createRoomName}
-                onChange={(e) => setCreateRoomName(e.target.value)}
-              />
-              <button style={styles.searchButton} onClick={createRoom}>
                 ➕
               </button>
             </div>
 
-            {/* Join Room */}
-            <div style={{ display: "flex", gap: "6px" }}>
-              <input
-                style={styles.searchInput}
-                placeholder="Enter Room ID"
-                value={joinRoomId}
-                onChange={(e) => setJoinRoomId(e.target.value)}
-              />
-              <button style={styles.searchButton} onClick={joinRoomById}>
-                🔗
-              </button>
-            </div>
-          </div>
-
-            {rooms.length === 0 ? (
-              <div style={styles.emptyState}>
-                No chats yet. Add a contact to start chatting!
-              </div>
-            ) : (
-              rooms.map((room) => (
-                <div
-                  key={room.id}
-                  style={{
-                    ...styles.listItem,
-                    ...(selectedRoom === room.id ? styles.listItemActive : {}),
-                  }}
-                  onClick={() => joinRoom(room.id)}
-                >
-                  <div style={styles.listItemContent}>
-                    <div style={styles.listItemTitle}>
-                      {getRoomTitle(room)}
-                    </div>
-                    {room.unread_count > 0 && (
-                      <span style={styles.badge}>{room.unread_count}</span>
-                    )}
+            {showCreateRoom && (
+              <div style={styles.createRoomPanel}>
+                <div style={styles.panelSection}>
+                  <label style={styles.panelLabel}>Create New Room</label>
+                  <div style={styles.inputRow}>
+                    <input
+                      style={styles.panelInput}
+                      placeholder="Room name"
+                      value={createRoomName}
+                      onChange={(e) => setCreateRoomName(e.target.value)}
+                    />
+                    <button style={styles.panelBtn} onClick={createRoom}>
+                      Create
+                    </button>
                   </div>
                 </div>
-              ))
+
+                <div style={styles.panelSection}>
+                  <label style={styles.panelLabel}>Join Existing Room</label>
+                  <div style={styles.inputRow}>
+                    <input
+                      style={styles.panelInput}
+                      placeholder="Room ID"
+                      value={joinRoomId}
+                      onChange={(e) => setJoinRoomId(e.target.value)}
+                    />
+                    <button style={styles.panelBtn} onClick={joinRoomById}>
+                      Join
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
+
+            <div style={styles.roomsList}>
+              {rooms.length === 0 ? (
+                <div style={styles.emptyState}>
+                  <div style={styles.emptyIcon}>📭</div>
+                  <p style={styles.emptyText}>No chats yet</p>
+                  <p style={styles.emptySubtext}>Start a conversation!</p>
+                </div>
+              ) : (
+                rooms.map((room) => (
+                  <div
+                    key={room.id}
+                    style={{
+                      ...styles.roomItem,
+                      ...(selectedRoom === room.id ? styles.roomItemActive : {}),
+                    }}
+                    onClick={() => joinRoom(room.id)}
+                  >
+                    <div style={styles.roomAvatar}>
+                      {room.type === "dm" ? "👤" : "👥"}
+                    </div>
+                    <div style={styles.roomInfo}>
+                      <div style={styles.roomHeader}>
+                        <span style={styles.roomName}>{getRoomTitle(room)}</span>
+                        {room.unread_count > 0 && (
+                          <span style={styles.unreadBadge}>{room.unread_count}</span>
+                        )}
+                      </div>
+                      <div style={styles.roomPreview}>
+                        {room.last_message_at ? "Recent activity" : "No messages yet"}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         )}
 
         {/* CONTACTS VIEW */}
         {activeView === "contacts" && (
-          <div style={styles.list}>
+          <div style={styles.listContainer}>
             <div style={styles.listHeader}>
-              <h3>Contacts</h3>
+              <h3 style={styles.listTitle}>Contacts</h3>
             </div>
 
-            {/* Search Users */}
-            <div style={styles.searchBox}>
-              <input
-                style={styles.searchInput}
-                placeholder="Search by email..."
-                value={searchEmail}
-                onChange={(e) => setSearchEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && searchUsers()}
-              />
-              <button style={styles.searchButton} onClick={searchUsers}>
-                🔍
-              </button>
+            <div style={styles.searchSection}>
+              <div style={styles.searchBox}>
+                <input
+                  style={styles.searchInput}
+                  placeholder="Search by email..."
+                  value={searchEmail}
+                  onChange={(e) => setSearchEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && searchUsers()}
+                />
+                <button style={styles.searchBtn} onClick={searchUsers}>
+                  🔍
+                </button>
+              </div>
+
+              {searchResults.length > 0 && (
+                <div style={styles.searchResults}>
+                  {searchResults.map((result) => (
+                    <div key={result.id} style={styles.searchResultItem}>
+                      <div style={styles.searchResultInfo}>
+                        <div style={styles.searchResultAvatar}>
+                          {result.email.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={styles.searchResultName}>{result.email}</div>
+                        </div>
+                      </div>
+                      <button
+                        style={styles.addBtn}
+                        onClick={() => addContact(result.email)}
+                      >
+                        + Add
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Search Results */}
-            {searchResults.length > 0 && (
-              <div style={styles.searchResults}>
-                <div style={styles.searchResultsTitle}>Search Results:</div>
-                {searchResults.map((result) => (
-                  <div key={result.id} style={styles.searchResultItem}>
-                    <div>{result.email}</div>
+            <div style={styles.contactsList}>
+              {contacts.length === 0 ? (
+                <div style={styles.emptyState}>
+                  <div style={styles.emptyIcon}>👥</div>
+                  <p style={styles.emptyText}>No contacts yet</p>
+                  <p style={styles.emptySubtext}>Search for users to add them</p>
+                </div>
+              ) : (
+                contacts.map((contact) => (
+                  <div key={contact.id} style={styles.contactItem}>
+                    <div style={styles.contactAvatar}>
+                      {contact.email.charAt(0).toUpperCase()}
+                    </div>
+                    <div style={styles.contactInfo}>
+                      <div style={styles.contactName}>{contact.email}</div>
+                      <div style={styles.contactStatus}>
+                        <span
+                          style={{
+                            ...styles.statusDot,
+                            background: onlineUsers.has(contact.id) ? "#10b981" : "#94a3b8",
+                          }}
+                        ></span>
+                        {onlineUsers.has(contact.id) ? "Online" : "Offline"}
+                      </div>
+                    </div>
                     <button
-                      style={styles.addButton}
-                      onClick={() => addContact(result.email)}
+                      style={styles.messageBtn}
+                      onClick={() => startDirectMessage(contact.id)}
                     >
-                      + Add
+                      💬
                     </button>
                   </div>
-                ))}
-              </div>
-            )}
-
-            {/* Contacts List */}
-            {contacts.length === 0 ? (
-              <div style={styles.emptyState}>
-                No contacts yet. Search for users by email to add them!
-              </div>
-            ) : (
-              contacts.map((contact) => (
-                <div key={contact.id} style={styles.contactItem}>
-                  <div>
-                    <div style={styles.contactName}>{contact.email}</div>
-                    <div style={styles.contactStatus}>
-                      <span
-                        style={{
-                          ...styles.statusDot,
-                          ...(onlineUsers.has(contact.id)
-                            ? styles.statusDotOnline
-                            : styles.statusDotOffline),
-                        }}
-                      ></span>
-                      {onlineUsers.has(contact.id) ? "Online" : "Offline"}
-                    </div>
-                  </div>
-                  <button
-                    style={styles.dmButton}
-                    onClick={() => startDirectMessage(contact.id)}
-                  >
-                    💬 Message
-                  </button>
-                </div>
-              ))
-            )}
+                ))
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -702,89 +743,114 @@ function App() {
       {/* CHAT AREA */}
       <div style={styles.chatArea}>
         {!selectedRoom ? (
-          <div style={styles.emptyChatState}>
-            <div style={styles.emptyChatIcon}>💬</div>
-            <div style={styles.emptyChatText}>
-              Select a chat to start messaging
-            </div>
+          <div style={styles.welcomeScreen}>
+            <div style={styles.welcomeIcon}>💬</div>
+            <h2 style={styles.welcomeTitle}>Welcome to ChatFlow</h2>
+            <p style={styles.welcomeText}>
+              Select a conversation to start messaging
+            </p>
           </div>
         ) : (
           <>
             {/* Chat Header */}
             <div style={styles.chatHeader}>
-              <div style={styles.chatHeaderRow}>
+              <div style={styles.chatHeaderLeft}>
+                <div style={styles.chatAvatar}>
+                  {selectedRoomData?.type === "dm" ? "👤" : "👥"}
+                </div>
                 <div>
                   <div style={styles.chatTitle}>
                     {getRoomTitle(selectedRoomData)}
                   </div>
-
-                  {/* ✅ Show Room ID only for group rooms */}
                   {selectedRoomData?.type === "group" && (
-                    <div style={styles.roomIdText}>
-                      Room ID: {selectedRoom}
+                    <div style={styles.roomIdBadge}>
+                      ID: {selectedRoom.slice(0, 8)}...
                     </div>
                   )}
-
                   {typingUsers.size > 0 && (
                     <div style={styles.typingIndicator}>
-                      {typingUsers.size === 1
-                        ? "Someone is"
-                        : `${typingUsers.size} people are`}{" "}
+                      <span style={styles.typingDots}></span>
                       typing...
                     </div>
                   )}
                 </div>
-
-                {/* ✅ Copy button only for group rooms */}
-                {selectedRoomData?.type === "group" && (
-                  <button
-                    style={styles.copyRoomButton}
-                    onClick={() => copyRoomId(selectedRoom)}
-                    title="Copy Room ID"
-                  >
-                    📋 Copy ID
-                  </button>
-                )}
               </div>
+
+              {selectedRoomData?.type === "group" && (
+                <button
+                  style={styles.copyBtn}
+                  onClick={() => copyRoomId(selectedRoom)}
+                  title="Copy Room ID"
+                >
+                  📋
+                </button>
+              )}
             </div>
 
-
             {/* Messages */}
-            <div style={styles.messagesContainer}>
+            <div style={styles.messagesArea}>
               {isLoadingMessages ? (
-                <div style={styles.loading}>Loading messages...</div>
+                <div style={styles.loadingContainer}>
+                  <div style={styles.spinner}></div>
+                  <p style={styles.loadingText}>Loading messages...</p>
+                </div>
               ) : messages.length === 0 ? (
-                <div style={styles.noMessages}>
-                  No messages yet. Start the conversation!
+                <div style={styles.emptyChat}>
+                  <div style={styles.emptyChatIcon}>💭</div>
+                  <p style={styles.emptyChatText}>No messages yet</p>
+                  <p style={styles.emptyChatSubtext}>Start the conversation!</p>
                 </div>
               ) : (
-                messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    style={{
-                      ...styles.message,
-                      ...(msg.senderId === user.$id
-                        ? styles.messageOwn
-                        : styles.messageOther),
-                    }}
-                  >
-                        {msg.senderId !== user.$id && (
-                        <div style={styles.messageSender}>
-                        {msg.senderName || msg.senderEmail || msg.senderId?.slice(0, 8)}
-                        </div>
+                <>
+                  {messages.map((msg) => {
+                    const isOwn = msg.senderId === user.$id;
+                    return (
+                      <div
+                        key={msg.id}
+                        style={{
+                          ...styles.messageWrapper,
+                          justifyContent: isOwn ? "flex-end" : "flex-start",
+                        }}
+                      >
+                        {!isOwn && (
+                          <div style={styles.messageAvatar}>
+                            {(msg.senderName || msg.senderEmail || "U").charAt(0).toUpperCase()}
+                          </div>
                         )}
-
-                    <div style={styles.messageContent}>{msg.content}</div>
-                    <div style={styles.messageTime}>
-                      {new Date(msg.timestamp || msg.created_at).toLocaleTimeString()}
-                    </div>
-                  </div>
-                ))
+                        <div
+                          style={{
+                            ...styles.message,
+                            ...(isOwn ? styles.messageOwn : styles.messageOther),
+                          }}
+                        >
+                          {!isOwn && (
+                            <div style={styles.messageSender}>
+                              {msg.senderName || msg.senderEmail || msg.senderId?.slice(0, 8)}
+                            </div>
+                          )}
+                          <div style={styles.messageContent}>{msg.content}</div>
+                          <div style={styles.messageTime}>
+                            {new Date(msg.timestamp || msg.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </div>
+                        </div>
+                        {isOwn && (
+                          <div style={{...styles.messageAvatar, ...styles.messageAvatarOwn}}>
+                            {user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
+                </>
               )}
             </div>
 
             {/* Message Input */}
-            <div style={styles.inputContainer}>
+            <div style={styles.inputArea}>
               <input
                 style={styles.messageInput}
                 placeholder="Type a message..."
@@ -800,8 +866,12 @@ function App() {
                   }
                 }}
               />
-              <button style={styles.sendButton} onClick={sendMessage}>
-                Send
+              <button
+                style={styles.sendBtn}
+                onClick={sendMessage}
+                disabled={!messageInput.trim()}
+              >
+                <span style={styles.sendIcon}>➤</span>
               </button>
             </div>
           </>
@@ -812,356 +882,697 @@ function App() {
 }
 
 // ====================================
-// STYLES
+// MODERN STYLES
 // ====================================
 
 const styles = {
-  // Auth styles
+  // Auth Styles
   authContainer: {
+    minHeight: "100vh",
     display: "flex",
-    justifyContent: "center",
     alignItems: "center",
-    height: "100vh",
+    justifyContent: "center",
     background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    padding: "20px",
   },
   authBox: {
     background: "white",
-    padding: "40px",
-    borderRadius: "12px",
-    boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+    borderRadius: "24px",
+    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3)",
     width: "100%",
-    maxWidth: "400px",
+    maxWidth: "440px",
+    overflow: "hidden",
   },
-  authTitle: {
-    marginBottom: "30px",
+  authHeader: {
+    padding: "40px 40px 30px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
     textAlign: "center",
-    color: "#333",
+  },
+  logoContainer: {
+    marginBottom: "12px",
+  },
+  logo: {
+    fontSize: "48px",
+    marginBottom: "8px",
+  },
+  appTitle: {
+    margin: "0",
+    fontSize: "28px",
+    fontWeight: "700",
+    letterSpacing: "-0.5px",
+  },
+  authSubtitle: {
+    margin: "0",
+    fontSize: "14px",
+    opacity: "0.9",
+  },
+  authToggle: {
+    display: "flex",
+    padding: "8px",
+    margin: "20px 20px 0",
+    background: "#f1f5f9",
+    borderRadius: "12px",
+  },
+  toggleBtn: {
+    flex: 1,
+    padding: "10px",
+    background: "transparent",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#64748b",
+    cursor: "pointer",
+    transition: "all 0.2s",
+  },
+  toggleBtnActive: {
+    background: "white",
+    color: "#667eea",
+    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
+  },
+  authForm: {
+    padding: "30px 40px 40px",
+  },
+  inputGroup: {
+    marginBottom: "20px",
+  },
+  inputLabel: {
+    display: "block",
+    marginBottom: "8px",
+    fontSize: "13px",
+    fontWeight: "600",
+    color: "#334155",
   },
   input: {
     width: "100%",
-    padding: "12px",
-    marginBottom: "15px",
-    border: "1px solid #ddd",
-    borderRadius: "6px",
+    padding: "12px 16px",
+    border: "2px solid #e2e8f0",
+    borderRadius: "12px",
     fontSize: "14px",
+    transition: "all 0.2s",
     boxSizing: "border-box",
+    outline: "none",
   },
-  authButtons: {
-    display: "flex",
-    gap: "10px",
-  },
-  button: {
-    flex: 1,
-    padding: "12px",
-    background: "#667eea",
+  authButton: {
+    width: "100%",
+    padding: "14px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
     color: "white",
     border: "none",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontSize: "14px",
+    borderRadius: "12px",
+    fontSize: "15px",
     fontWeight: "600",
-  },
-  buttonSecondary: {
-    flex: 1,
-    padding: "12px",
-    background: "#f0f0f0",
-    color: "#333",
-    border: "none",
-    borderRadius: "6px",
     cursor: "pointer",
-    fontSize: "14px",
-    fontWeight: "600",
+    transition: "transform 0.2s, box-shadow 0.2s",
+    marginTop: "10px",
   },
 
-  // Main layout
+  // Main Layout
   container: {
     display: "flex",
     height: "100vh",
-    fontFamily: "Arial, sans-serif",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    background: "#f8fafc",
   },
   sidebar: {
-    width: "300px",
-    borderRight: "1px solid #e0e0e0",
+    width: "340px",
+    background: "white",
+    borderRight: "1px solid #e2e8f0",
     display: "flex",
     flexDirection: "column",
-    background: "#f8f9fa",
   },
   chatArea: {
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    background: "#fff",
+    background: "#f8fafc",
   },
 
-  // Sidebar components
+  // Sidebar Components
   userHeader: {
     padding: "20px",
-    borderBottom: "1px solid #e0e0e0",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
-    background: "white",
+    justifyContent: "space-between",
+  },
+  userProfile: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+  },
+  avatar: {
+    width: "44px",
+    height: "44px",
+    borderRadius: "50%",
+    background: "rgba(255, 255, 255, 0.2)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "18px",
+    fontWeight: "600",
+    backdropFilter: "blur(10px)",
+  },
+  userInfo: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
   },
   userName: {
+    fontSize: "15px",
     fontWeight: "600",
-    fontSize: "14px",
-    marginBottom: "4px",
   },
   userStatus: {
     fontSize: "12px",
-    color: "#666",
+    opacity: "0.9",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+  },
+  statusIndicator: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    background: "#10b981",
+    boxShadow: "0 0 8px rgba(16, 185, 129, 0.6)",
+  },
+  logoutBtn: {
+    width: "36px",
+    height: "36px",
+    borderRadius: "50%",
+    background: "rgba(255, 255, 255, 0.2)",
+    border: "none",
+    color: "white",
+    fontSize: "18px",
+    cursor: "pointer",
+    transition: "all 0.2s",
+    backdropFilter: "blur(10px)",
+  },
+
+  navTabs: {
+    display: "flex",
+    padding: "12px 12px 0",
+    gap: "8px",
+    background: "white",
+  },
+  navTab: {
+    flex: 1,
+    padding: "12px",
+    background: "transparent",
+    border: "none",
+    borderRadius: "12px 12px 0 0",
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#64748b",
+    cursor: "pointer",
+    transition: "all 0.2s",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+  },
+  navTabActive: {
+    background: "#f8fafc",
+    color: "#667eea",
+  },
+  navIcon: {
+    fontSize: "18px",
+  },
+
+  listContainer: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+    background: "#f8fafc",
+  },
+  listHeader: {
+    padding: "16px 20px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    background: "white",
+    borderBottom: "1px solid #e2e8f0",
+  },
+  listTitle: {
+    margin: 0,
+    fontSize: "16px",
+    fontWeight: "600",
+    color: "#1e293b",
+  },
+  iconBtn: {
+    width: "32px",
+    height: "32px",
+    borderRadius: "8px",
+    background: "#f1f5f9",
+    border: "none",
+    fontSize: "16px",
+    cursor: "pointer",
+    transition: "all 0.2s",
+  },
+
+  createRoomPanel: {
+    padding: "16px",
+    background: "white",
+    borderBottom: "1px solid #e2e8f0",
+  },
+  panelSection: {
+    marginBottom: "12px",
+  },
+  panelLabel: {
+    display: "block",
+    marginBottom: "8px",
+    fontSize: "12px",
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  inputRow: {
+    display: "flex",
+    gap: "8px",
+  },
+  panelInput: {
+    flex: 1,
+    padding: "10px 12px",
+    border: "1px solid #e2e8f0",
+    borderRadius: "8px",
+    fontSize: "13px",
+  },
+  panelBtn: {
+    padding: "10px 16px",
+    background: "#667eea",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "600",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+
+  roomsList: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "8px",
+  },
+  roomItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "12px",
+    marginBottom: "4px",
+    borderRadius: "12px",
+    cursor: "pointer",
+    transition: "all 0.2s",
+    background: "white",
+  },
+  roomItemActive: {
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+  },
+  roomAvatar: {
+    width: "40px",
+    height: "40px",
+    borderRadius: "12px",
+    background: "#f1f5f9",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "20px",
+  },
+  roomInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  roomHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "4px",
+  },
+  roomName: {
+    fontSize: "14px",
+    fontWeight: "600",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  unreadBadge: {
+    padding: "2px 8px",
+    background: "#ef4444",
+    color: "white",
+    borderRadius: "10px",
+    fontSize: "11px",
+    fontWeight: "700",
+  },
+  roomPreview: {
+    fontSize: "12px",
+    opacity: "0.7",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  emptyState: {
+    padding: "60px 20px",
+    textAlign: "center",
+  },
+  emptyIcon: {
+    fontSize: "48px",
+    marginBottom: "12px",
+  },
+  emptyText: {
+    margin: "0 0 4px",
+    fontSize: "16px",
+    fontWeight: "600",
+    color: "#1e293b",
+  },
+  emptySubtext: {
+    margin: "0",
+    fontSize: "13px",
+    color: "#94a3b8",
+  },
+
+  // Contacts Section
+  searchSection: {
+    padding: "16px",
+    background: "white",
+    borderBottom: "1px solid #e2e8f0",
+  },
+  searchBox: {
+    display: "flex",
+    gap: "8px",
+  },
+  searchInput: {
+    flex: 1,
+    padding: "10px 14px",
+    border: "2px solid #e2e8f0",
+    borderRadius: "12px",
+    fontSize: "13px",
+    outline: "none",
+  },
+  searchBtn: {
+    padding: "10px 16px",
+    background: "#667eea",
+    color: "white",
+    border: "none",
+    borderRadius: "12px",
+    fontSize: "16px",
+    cursor: "pointer",
+  },
+  searchResults: {
+    marginTop: "12px",
+    padding: "8px",
+    background: "#f8fafc",
+    borderRadius: "12px",
+  },
+  searchResultItem: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "10px",
+    marginBottom: "4px",
+    background: "white",
+    borderRadius: "8px",
+  },
+  searchResultInfo: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+  },
+  searchResultAvatar: {
+    width: "32px",
+    height: "32px",
+    borderRadius: "8px",
+    background: "#f1f5f9",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#667eea",
+  },
+  searchResultName: {
+    fontSize: "13px",
+    fontWeight: "500",
+  },
+  addBtn: {
+    padding: "6px 12px",
+    background: "#10b981",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "12px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+
+  contactsList: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "8px",
+  },
+  contactItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "12px",
+    marginBottom: "4px",
+    background: "white",
+    borderRadius: "12px",
+  },
+  contactAvatar: {
+    width: "40px",
+    height: "40px",
+    borderRadius: "12px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "16px",
+    fontWeight: "600",
+  },
+  contactInfo: {
+    flex: 1,
+  },
+  contactName: {
+    fontSize: "14px",
+    fontWeight: "600",
+    marginBottom: "4px",
+    color: "#1e293b",
+  },
+  contactStatus: {
+    fontSize: "12px",
+    color: "#64748b",
     display: "flex",
     alignItems: "center",
     gap: "6px",
   },
   statusDot: {
-    width: "8px",
-    height: "8px",
+    width: "6px",
+    height: "6px",
     borderRadius: "50%",
-    background: "#4caf50",
   },
-  statusDotOnline: {
-    background: "#4caf50",
-  },
-  statusDotOffline: {
-    background: "#999",
-  },
-  logoutButton: {
-    padding: "6px 12px",
-    background: "#f0f0f0",
+  messageBtn: {
+    width: "36px",
+    height: "36px",
+    borderRadius: "8px",
+    background: "#f1f5f9",
     border: "none",
-    borderRadius: "4px",
+    fontSize: "18px",
     cursor: "pointer",
-    fontSize: "12px",
+    transition: "all 0.2s",
   },
 
-  tabs: {
-    display: "flex",
-    borderBottom: "1px solid #e0e0e0",
-    background: "white",
-  },
-  tab: {
+  // Chat Area
+  welcomeScreen: {
     flex: 1,
-    padding: "12px",
-    background: "transparent",
-    border: "none",
-    borderBottom: "2px solid transparent",
-    cursor: "pointer",
-    fontSize: "14px",
-    fontWeight: "500",
-    color: "#666",
-  },
-  tabActive: {
-    color: "#667eea",
-    borderBottomColor: "#667eea",
-  },
-
-  list: {
-    flex: 1,
-    overflowY: "auto",
-  },
-  listHeader: {
-    padding: "15px 20px",
-    borderBottom: "1px solid #e0e0e0",
     display: "flex",
-    justifyContent: "space-between",
+    flexDirection: "column",
     alignItems: "center",
-    background: "white",
+    justifyContent: "center",
+    padding: "40px",
   },
-  refreshButton: {
-    background: "transparent",
-    border: "none",
-    cursor: "pointer",
+  welcomeIcon: {
+    fontSize: "80px",
+    marginBottom: "24px",
+    opacity: "0.5",
+  },
+  welcomeTitle: {
+    margin: "0 0 12px",
+    fontSize: "28px",
+    fontWeight: "700",
+    color: "#1e293b",
+  },
+  welcomeText: {
+    margin: "0",
     fontSize: "16px",
+    color: "#64748b",
   },
-  listItem: {
-    padding: "15px 20px",
-    borderBottom: "1px solid #f0f0f0",
-    cursor: "pointer",
-    transition: "background 0.2s",
+
+  chatHeader: {
+    padding: "20px 24px",
     background: "white",
-  },
-  listItemActive: {
-    background: "#e8eaf6",
-  },
-  listItemContent: {
+    borderBottom: "1px solid #e2e8f0",
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
+    justifyContent: "space-between",
   },
-  listItemTitle: {
-    fontWeight: "500",
-    fontSize: "14px",
+  chatHeaderLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
   },
-  badge: {
-    background: "#667eea",
-    color: "white",
-    padding: "2px 8px",
+  chatAvatar: {
+    width: "40px",
+    height: "40px",
     borderRadius: "12px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "20px",
+  },
+  chatTitle: {
+    fontSize: "16px",
+    fontWeight: "600",
+    color: "#1e293b",
+    marginBottom: "2px",
+  },
+  roomIdBadge: {
+    display: "inline-block",
+    padding: "2px 8px",
+    background: "#f1f5f9",
+    borderRadius: "6px",
     fontSize: "11px",
-    fontWeight: "600",
+    color: "#64748b",
+    marginBottom: "2px",
   },
-
-  emptyState: {
-    padding: "40px 20px",
-    textAlign: "center",
-    color: "#999",
-    fontSize: "14px",
-  },
-
-  // Contact components
-  searchBox: {
-    padding: "15px",
-    display: "flex",
-    gap: "8px",
-    background: "white",
-    borderBottom: "1px solid #e0e0e0",
-  },
-  searchInput: {
-    flex: 1,
-    padding: "8px 12px",
-    border: "1px solid #ddd",
-    borderRadius: "4px",
-    fontSize: "13px",
-  },
-  searchButton: {
-    padding: "8px 16px",
-    background: "#667eea",
-    color: "white",
-    border: "none",
-    borderRadius: "4px",
-    cursor: "pointer",
-  },
-  searchResults: {
-    background: "#f0f0f0",
-    borderBottom: "1px solid #e0e0e0",
-  },
-  searchResultsTitle: {
-    padding: "10px 20px",
+  typingIndicator: {
     fontSize: "12px",
-    fontWeight: "600",
-    color: "#666",
-  },
-  searchResultItem: {
-    padding: "10px 20px",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    background: "white",
-    borderBottom: "1px solid #f0f0f0",
-  },
-  addButton: {
-    padding: "4px 12px",
-    background: "#4caf50",
-    color: "white",
-    border: "none",
-    borderRadius: "4px",
-    cursor: "pointer",
-    fontSize: "12px",
-  },
-  contactItem: {
-    padding: "15px 20px",
-    borderBottom: "1px solid #f0f0f0",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    background: "white",
-  },
-  contactName: {
-    fontWeight: "500",
-    fontSize: "14px",
-    marginBottom: "4px",
-  },
-  contactStatus: {
-    fontSize: "12px",
-    color: "#666",
+    color: "#64748b",
     display: "flex",
     alignItems: "center",
     gap: "6px",
   },
-  dmButton: {
-    padding: "6px 12px",
-    background: "#667eea",
-    color: "white",
+  typingDots: {
+    display: "inline-block",
+    width: "4px",
+    height: "4px",
+    borderRadius: "50%",
+    background: "#64748b",
+    animation: "typing 1.4s infinite",
+  },
+  copyBtn: {
+    padding: "8px 12px",
+    background: "#f1f5f9",
     border: "none",
-    borderRadius: "4px",
+    borderRadius: "8px",
+    fontSize: "16px",
     cursor: "pointer",
-    fontSize: "12px",
+    transition: "all 0.2s",
   },
 
-  // Chat area
-  emptyChatState: {
+  messagesArea: {
     flex: 1,
+    overflowY: "auto",
+    padding: "24px",
     display: "flex",
     flexDirection: "column",
-    justifyContent: "center",
+    gap: "16px",
+  },
+  loadingContainer: {
+    display: "flex",
+    flexDirection: "column",
     alignItems: "center",
-    color: "#999",
+    justifyContent: "center",
+    height: "100%",
+    gap: "16px",
+  },
+  spinner: {
+    width: "40px",
+    height: "40px",
+    border: "4px solid #e2e8f0",
+    borderTop: "4px solid #667eea",
+    borderRadius: "50%",
+    animation: "spin 1s linear infinite",
+  },
+  loadingText: {
+    color: "#64748b",
+    fontSize: "14px",
+  },
+  emptyChat: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100%",
   },
   emptyChatIcon: {
     fontSize: "64px",
-    marginBottom: "20px",
+    marginBottom: "16px",
+    opacity: "0.3",
   },
   emptyChatText: {
-    fontSize: "16px",
-  },
-
-  chatHeader: {
-    padding: "20px",
-    borderBottom: "1px solid #e0e0e0",
-    background: "white",
-  },
-  chatTitle: {
-    fontWeight: "600",
+    margin: "0 0 4px",
     fontSize: "18px",
-    marginBottom: "4px",
+    fontWeight: "600",
+    color: "#1e293b",
   },
-  typingIndicator: {
-    fontSize: "12px",
-    color: "#999",
-    fontStyle: "italic",
+  emptyChatSubtext: {
+    margin: "0",
+    fontSize: "14px",
+    color: "#94a3b8",
   },
 
-  messagesContainer: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "20px",
+  messageWrapper: {
     display: "flex",
-    flexDirection: "column",
-    gap: "12px",
-    background: "#f8f9fa",
+    gap: "8px",
+    alignItems: "flex-end",
   },
-  loading: {
-    textAlign: "center",
-    color: "#999",
-    padding: "40px",
-  },
-  noMessages: {
-    textAlign: "center",
-    color: "#999",
-    padding: "40px",
-  },
-  message: {
-    maxWidth: "70%",
-    padding: "10px 14px",
-    borderRadius: "12px",
+  messageAvatar: {
+    width: "32px",
+    height: "32px",
+    borderRadius: "8px",
+    background: "#f1f5f9",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     fontSize: "14px",
+    fontWeight: "600",
+    color: "#667eea",
+    flexShrink: 0,
   },
-  messageOwn: {
-    alignSelf: "flex-end",
-    background: "#667eea",
+  messageAvatarOwn: {
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
     color: "white",
   },
+  message: {
+    maxWidth: "60%",
+    padding: "12px 16px",
+    borderRadius: "16px",
+    fontSize: "14px",
+    lineHeight: "1.5",
+  },
+  messageOwn: {
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    borderBottomRightRadius: "4px",
+  },
   messageOther: {
-    alignSelf: "flex-start",
     background: "white",
-    border: "1px solid #e0e0e0",
+    color: "#1e293b",
+    borderBottomLeftRadius: "4px",
+    boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
   },
   messageSender: {
     fontSize: "11px",
     fontWeight: "600",
     marginBottom: "4px",
-    color: "#667eea",
+    opacity: "0.8",
   },
   messageContent: {
     marginBottom: "4px",
@@ -1169,56 +1580,58 @@ const styles = {
   },
   messageTime: {
     fontSize: "10px",
-    opacity: 0.7,
+    opacity: "0.6",
+    textAlign: "right",
   },
 
-  inputContainer: {
-    padding: "20px",
-    borderTop: "1px solid #e0e0e0",
-    display: "flex",
-    gap: "10px",
+  inputArea: {
+    padding: "20px 24px",
     background: "white",
+    borderTop: "1px solid #e2e8f0",
+    display: "flex",
+    gap: "12px",
+    alignItems: "center",
   },
   messageInput: {
     flex: 1,
-    padding: "12px",
-    border: "1px solid #ddd",
+    padding: "14px 18px",
+    border: "2px solid #e2e8f0",
     borderRadius: "24px",
     fontSize: "14px",
+    outline: "none",
+    transition: "all 0.2s",
   },
-  sendButton: {
-    padding: "12px 24px",
-    background: "#667eea",
+  sendBtn: {
+    width: "48px",
+    height: "48px",
+    borderRadius: "50%",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
     color: "white",
     border: "none",
-    borderRadius: "24px",
     cursor: "pointer",
-    fontWeight: "600",
+    transition: "all 0.2s",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  chatHeaderRow: {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: "12px",
-},
-
-copyRoomButton: {
-  padding: "8px 12px",
-  background: "#f0f0f0",
-  border: "none",
-  borderRadius: "8px",
-  cursor: "pointer",
-  fontSize: "13px",
-  fontWeight: "600",
-  whiteSpace: "nowrap",
-},
-
-roomIdText: {
-  fontSize: "11px",
-  color: "#777",
-  marginTop: "4px",
-  wordBreak: "break-all",
-},
+  sendIcon: {
+    fontSize: "18px",
+  },
 };
+
+// Add keyframes animation for spinner
+const styleSheet = document.createElement("style");
+styleSheet.textContent = `
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  
+  @keyframes typing {
+    0%, 60%, 100% { opacity: 1; }
+    30% { opacity: 0.3; }
+  }
+`;
+document.head.appendChild(styleSheet);
 
 export default App;
