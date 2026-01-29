@@ -41,6 +41,12 @@ function App() {
   const [createRoomName, setCreateRoomName] = useState("");
   const [joinRoomId, setJoinRoomId] = useState("");
   
+  //SIGNUP STATE
+  const [authMode, setAuthMode] = useState("login"); // login | signup
+  const [name, setName] = useState("");
+
+
+
   // ====================================
   // AUTH FUNCTIONS
   // ====================================
@@ -48,8 +54,14 @@ function App() {
   
     const signup = async () => {
       try {
-        await account.create(ID.unique(), email, password);
-    
+        if (!name.trim()) {
+          alert("Please enter your name");
+          return;
+        }
+
+        await account.create(ID.unique(), email, password, name);
+
+        // Create session (Appwrite SDK compatibility)
         if (typeof account.createEmailPasswordSession === "function") {
           await account.createEmailPasswordSession(email, password);
         } else if (typeof account.createSession === "function") {
@@ -59,7 +71,7 @@ function App() {
         } else {
           throw new Error("Appwrite SDK missing session creation method");
         }
-    
+
         const user = await account.get();
         setUser(user);
       } catch (err) {
@@ -67,6 +79,7 @@ function App() {
         console.error(err);
       }
     };
+
 
 
 
@@ -376,12 +389,15 @@ function App() {
   const getRoomTitle = (room) => {
     if (!room) return "Chat";
 
+    // DM: show other person's name/email instead of room id
     if (room.type === "dm") {
       return room.dm_name || room.dm_email || "Direct Message";
     }
 
+    // Group room: show name or fallback
     return room.name || `Room ${room.id.slice(0, 8)}`;
   };
+
 
   // ====================================
   // Group Room Functions
@@ -426,35 +442,58 @@ function App() {
   // ====================================
 
   if (!user) {
-    return (
-      <div style={styles.authContainer}>
-        <div style={styles.authBox}>
-          <h2 style={styles.authTitle}>Real-Time Chat</h2>
+  return (
+    <div style={styles.authContainer}>
+      <div style={styles.authBox}>
+        <h2 style={styles.authTitle}>
+          {authMode === "login" ? "Login" : "Sign Up"}
+        </h2>
+
+        {authMode === "signup" && (
           <input
             style={styles.input}
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Full Name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
           />
-          <input
-            style={styles.input}
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <div style={styles.authButtons}>
-            <button style={styles.button} onClick={login}>
-              Login
-            </button>
-            <button style={styles.buttonSecondary} onClick={signup}>
-              Signup
-            </button>
-          </div>
-        </div>
+        )}
+
+        <input
+          style={styles.input}
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+
+        <input
+          style={styles.input}
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+
+        <button
+          style={styles.button}
+          onClick={authMode === "login" ? login : signup}
+        >
+          {authMode === "login" ? "Login" : "Create Account"}
+        </button>
+
+        <button
+          style={{ ...styles.buttonSecondary, marginTop: "10px" }}
+          onClick={() => {
+            setAuthMode(authMode === "login" ? "signup" : "login");
+          }}
+        >
+          {authMode === "login"
+            ? "New here? Create an account"
+            : "Already have an account? Login"}
+        </button>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   // ====================================
   // RENDER: MAIN CHAT UI
@@ -693,11 +732,12 @@ function App() {
                         : styles.messageOther),
                     }}
                   >
-                    {msg.senderId !== user.$id && (
-                      <div style={styles.messageSender}>
-                        {msg.senderEmail || msg.senderId?.slice(0, 8)}
-                      </div>
-                    )}
+                        {msg.senderId !== user.$id && (
+                        <div style={styles.messageSender}>
+                        {msg.senderName || msg.senderEmail || msg.senderId?.slice(0, 8)}
+                        </div>
+                        )}
+
                     <div style={styles.messageContent}>{msg.content}</div>
                     <div style={styles.messageTime}>
                       {new Date(msg.timestamp || msg.created_at).toLocaleTimeString()}

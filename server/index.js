@@ -185,9 +185,21 @@ app.get('/api/messages/:roomId', async (req, res) => {
     params.push(limit);
     
     const result = await pool.query(query, params);
-    
-    // Return in chronological order (oldest first)
-    res.json({ messages: result.rows.reverse() });
+
+    const normalized = result.rows.map((m) => ({
+      id: m.id,
+      roomId,
+      senderId: m.sender_id,
+      senderEmail: m.sender_email,
+      senderName: m.sender_name,
+      content: m.content,
+      created_at: m.created_at,
+      timestamp: new Date(m.created_at).getTime(),
+    }));
+
+    // Return oldest first
+    res.json({ messages: normalized.reverse() });
+
   } catch (err) {
     console.error('Get messages error:', err);
     res.status(500).json({ error: 'Failed to get messages' });
@@ -452,12 +464,20 @@ wss.on("connection", async (ws, req) => {
     console.log("✅ User authenticated:", ws.userEmail);
 
     // Upsert user in database
-    await pool.query(`
-      INSERT INTO users (id, email, status)
-      VALUES ($1, $2, 'online')
-      ON CONFLICT (id) 
-      DO UPDATE SET status = 'online', last_seen = CURRENT_TIMESTAMP
-    `, [ws.userId, ws.userEmail]);
+      await pool.query(
+        `
+        INSERT INTO users (id, email, name, status)
+        VALUES ($1, $2, $3, 'online')
+        ON CONFLICT (id)
+        DO UPDATE SET
+          email = EXCLUDED.email,
+          name = COALESCE(EXCLUDED.name, users.name),
+          status = 'online',
+          last_seen = CURRENT_TIMESTAMP
+      `,
+        [ws.userId, ws.userEmail, user.name || null]
+      );
+
 
     // Track online user
     if (!onlineUsers.has(ws.userId)) {
