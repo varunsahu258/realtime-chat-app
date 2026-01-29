@@ -19,6 +19,8 @@ function App() {
   const [activeView, setActiveView] = useState("rooms");
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showEditRoomModal, setShowEditRoomModal] = useState(false);
   
   // Chat state
   const [rooms, setRooms] = useState([]);
@@ -28,8 +30,17 @@ function App() {
   
   // Contact state
   const [contacts, setContacts] = useState([]);
+  const [contactRequests, setContactRequests] = useState([]);
   const [searchEmail, setSearchEmail] = useState("");
   const [searchResults, setSearchResults] = useState([]);
+  
+  // Group invite state
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteSearchResults, setInviteSearchResults] = useState([]);
+  const [inviteLink, setInviteLink] = useState("");
+  
+  // Edit room state
+  const [editRoomName, setEditRoomName] = useState("");
   
   // Typing indicators
   const [typingUsers, setTypingUsers] = useState(new Set());
@@ -41,6 +52,12 @@ function App() {
   // Group Rooms state
   const [createRoomName, setCreateRoomName] = useState("");
   const [joinRoomId, setJoinRoomId] = useState("");
+
+  // Profile state
+  const [profilePicture, setProfilePicture] = useState(null);
+  const [profilePicturePreview, setProfilePicturePreview] = useState(null);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [newDisplayName, setNewDisplayName] = useState("");
 
   const messagesEndRef = useRef(null);
 
@@ -77,6 +94,11 @@ function App() {
 
       const user = await account.get();
       setUser(user);
+      
+      // Clear auth form
+      setEmail("");
+      setPassword("");
+      setName("");
     } catch (err) {
       alert("Signup failed: " + (err?.message || err));
       console.error(err);
@@ -97,6 +119,10 @@ function App() {
   
       const user = await account.get();
       setUser(user);
+      
+      // Clear auth form
+      setEmail("");
+      setPassword("");
     } catch (err) {
       alert("Login failed: " + (err?.message || err));
       console.error(err);
@@ -110,7 +136,9 @@ function App() {
       setRooms([]);
       setMessages([]);
       setContacts([]);
+      setContactRequests([]);
       setSelectedRoom(null);
+      setActiveView("rooms");
       if (wsRef.current) wsRef.current.close();
     } catch (err) {
       console.error("Logout error:", err);
@@ -243,10 +271,21 @@ function App() {
     }
   };
 
+  const loadContactRequests = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/contacts/requests?userId=${user.$id}`);
+      const data = await res.json();
+      setContactRequests(data.requests || []);
+    } catch (err) {
+      console.error("Failed to load contact requests:", err);
+    }
+  };
+
   useEffect(() => {
     if (user) {
       loadRooms();
       loadContacts();
+      loadContactRequests();
     }
   }, [user]);
 
@@ -334,7 +373,7 @@ function App() {
     }
   };
 
-  const addContact = async (contactEmail) => {
+  const sendContactRequest = async (contactEmail) => {
     try {
       const res = await fetch(`${API_URL}/api/contacts/request`, {
         method: "POST",
@@ -343,17 +382,52 @@ function App() {
       });
 
       if (res.ok) {
-        alert("Contact added!");
-        loadContacts();
+        alert("Contact request sent!");
         setSearchEmail("");
         setSearchResults([]);
       } else {
         const data = await res.json();
-        alert(data.error || "Failed to add contact");
+        alert(data.error || "Failed to send contact request");
       }
     } catch (err) {
-      console.error("Add contact error:", err);
-      alert("Failed to add contact");
+      console.error("Contact request error:", err);
+      alert("Failed to send contact request");
+    }
+  };
+
+  const acceptContactRequest = async (requestId, contactId) => {
+    try {
+      const res = await fetch(`${API_URL}/api/contacts/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, userId: user.$id }),
+      });
+
+      if (res.ok) {
+        loadContacts();
+        loadContactRequests();
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to accept request");
+      }
+    } catch (err) {
+      console.error("Accept request error:", err);
+    }
+  };
+
+  const rejectContactRequest = async (requestId) => {
+    try {
+      const res = await fetch(`${API_URL}/api/contacts/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, userId: user.$id }),
+      });
+
+      if (res.ok) {
+        loadContactRequests();
+      }
+    } catch (err) {
+      console.error("Reject request error:", err);
     }
   };
 
@@ -423,13 +497,121 @@ function App() {
     joinRoom(joinRoomId.trim());
   };
 
-  const copyRoomId = async (roomId) => {
+  const generateInviteLink = () => {
+    if (!selectedRoom) return;
+    const link = `${window.location.origin}/invite/${selectedRoom}`;
+    setInviteLink(link);
+  };
+
+  const searchUsersForInvite = async () => {
+    if (!inviteEmail.trim()) return;
+
     try {
-      await navigator.clipboard.writeText(roomId);
-      alert("✅ Room ID copied!");
+      const res = await fetch(
+        `${API_URL}/api/users/search?email=${encodeURIComponent(inviteEmail)}`
+      );
+      const data = await res.json();
+      setInviteSearchResults(data.users || []);
+    } catch (err) {
+      console.error("Search failed:", err);
+    }
+  };
+
+  const inviteUserToRoom = async (userId) => {
+    try {
+      const res = await fetch(`${API_URL}/api/rooms/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          roomId: selectedRoom, 
+          userId: userId,
+          invitedBy: user.$id
+        }),
+      });
+
+      if (res.ok) {
+        alert("User invited successfully!");
+        setInviteEmail("");
+        setInviteSearchResults([]);
+        setShowInviteModal(false);
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to invite user");
+      }
+    } catch (err) {
+      console.error("Invite user error:", err);
+      alert("Failed to invite user");
+    }
+  };
+
+  const updateRoomName = async () => {
+    if (!editRoomName.trim()) return alert("Enter room name");
+
+    try {
+      const res = await fetch(`${API_URL}/api/rooms/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          roomId: selectedRoom, 
+          name: editRoomName,
+          userId: user.$id
+        }),
+      });
+
+      if (res.ok) {
+        alert("Room name updated!");
+        setEditRoomName("");
+        setShowEditRoomModal(false);
+        loadRooms();
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to update room name");
+      }
+    } catch (err) {
+      console.error("Update room error:", err);
+      alert("Failed to update room name");
+    }
+  };
+
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("✅ Copied to clipboard!");
     } catch (err) {
       console.error("Copy failed:", err);
       alert("❌ Copy failed. Please copy manually.");
+    }
+  };
+
+  // ====================================
+  // PROFILE FUNCTIONS
+  // ====================================
+
+  const handleProfilePictureChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setProfilePicture(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfilePicturePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const updateProfile = async () => {
+    try {
+      // In a real app, you'd upload the profile picture to storage
+      // and update user profile via API
+      
+      if (newDisplayName.trim()) {
+        // Update display name logic here
+        alert("Profile updated! (In production, this would save to backend)");
+        setEditingProfile(false);
+      }
+    } catch (err) {
+      console.error("Update profile error:", err);
+      alert("Failed to update profile");
     }
   };
 
@@ -518,6 +700,182 @@ function App() {
   }
 
   // ====================================
+  // RENDER: PROFILE PAGE
+  // ====================================
+
+  if (activeView === "profile") {
+    return (
+      <div style={styles.container}>
+        <div style={styles.sidebar}>
+          <div style={styles.userHeader}>
+            <div style={styles.userProfile}>
+              <div style={styles.avatar}>
+                {user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+              </div>
+              <div style={styles.userInfo}>
+                <div style={styles.userName}>{user.name || user.email}</div>
+                <div style={styles.userStatus}>
+                  <span style={styles.statusIndicator}></span>
+                  Online
+                </div>
+              </div>
+            </div>
+            <button style={styles.logoutBtn} onClick={logout} title="Logout">
+              ⏻
+            </button>
+          </div>
+
+          <div style={styles.navTabs}>
+            <button
+              style={styles.navTab}
+              onClick={() => setActiveView("rooms")}
+            >
+              <span style={styles.navIcon}>💬</span>
+              <span>Chats</span>
+            </button>
+            <button
+              style={styles.navTab}
+              onClick={() => setActiveView("contacts")}
+            >
+              <span style={styles.navIcon}>👥</span>
+              <span>Contacts</span>
+            </button>
+            <button
+              style={{...styles.navTab, ...styles.navTabActive}}
+              onClick={() => setActiveView("profile")}
+            >
+              <span style={styles.navIcon}>⚙️</span>
+              <span>Settings</span>
+            </button>
+          </div>
+        </div>
+
+        <div style={styles.chatArea}>
+          <div style={styles.profileContainer}>
+            <div style={styles.profileHeader}>
+              <h2 style={styles.profileTitle}>Profile Settings</h2>
+            </div>
+
+            <div style={styles.profileContent}>
+              <div style={styles.profileSection}>
+                <h3 style={styles.sectionTitle}>Profile Picture</h3>
+                <div style={styles.profilePictureSection}>
+                  <div style={styles.largeAvatar}>
+                    {profilePicturePreview ? (
+                      <img src={profilePicturePreview} alt="Profile" style={styles.profileImage} />
+                    ) : (
+                      user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()
+                    )}
+                  </div>
+                  <div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProfilePictureChange}
+                      style={styles.fileInput}
+                      id="profile-pic"
+                    />
+                    <label htmlFor="profile-pic" style={styles.uploadButton}>
+                      Upload New Picture
+                    </label>
+                    <p style={styles.helpText}>JPG, PNG or GIF. Max size 2MB</p>
+                  </div>
+                </div>
+              </div>
+
+              <div style={styles.profileSection}>
+                <h3 style={styles.sectionTitle}>Account Information</h3>
+                <div style={styles.infoGroup}>
+                  <label style={styles.infoLabel}>Display Name</label>
+                  {editingProfile ? (
+                    <input
+                      style={styles.input}
+                      value={newDisplayName}
+                      onChange={(e) => setNewDisplayName(e.target.value)}
+                      placeholder={user.name || "Enter display name"}
+                    />
+                  ) : (
+                    <div style={styles.infoValue}>{user.name || "Not set"}</div>
+                  )}
+                </div>
+
+                <div style={styles.infoGroup}>
+                  <label style={styles.infoLabel}>Email</label>
+                  <div style={styles.infoValue}>{user.email}</div>
+                </div>
+
+                <div style={styles.infoGroup}>
+                  <label style={styles.infoLabel}>User ID</label>
+                  <div style={styles.infoValue}>{user.$id}</div>
+                </div>
+
+                {editingProfile ? (
+                  <div style={styles.buttonGroup}>
+                    <button style={styles.saveButton} onClick={updateProfile}>
+                      Save Changes
+                    </button>
+                    <button 
+                      style={styles.cancelButton} 
+                      onClick={() => {
+                        setEditingProfile(false);
+                        setNewDisplayName("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button 
+                    style={styles.editButton} 
+                    onClick={() => {
+                      setEditingProfile(true);
+                      setNewDisplayName(user.name || "");
+                    }}
+                  >
+                    Edit Profile
+                  </button>
+                )}
+              </div>
+
+              <div style={styles.profileSection}>
+                <h3 style={styles.sectionTitle}>Preferences</h3>
+                <div style={styles.preferenceItem}>
+                  <div>
+                    <div style={styles.preferenceLabel}>Notifications</div>
+                    <div style={styles.preferenceDesc}>Receive notifications for new messages</div>
+                  </div>
+                  <label style={styles.switch}>
+                    <input type="checkbox" defaultChecked />
+                    <span style={styles.slider}></span>
+                  </label>
+                </div>
+
+                <div style={styles.preferenceItem}>
+                  <div>
+                    <div style={styles.preferenceLabel}>Sound</div>
+                    <div style={styles.preferenceDesc}>Play sound for incoming messages</div>
+                  </div>
+                  <label style={styles.switch}>
+                    <input type="checkbox" defaultChecked />
+                    <span style={styles.slider}></span>
+                  </label>
+                </div>
+              </div>
+
+              <div style={styles.profileSection}>
+                <h3 style={styles.sectionTitle}>Danger Zone</h3>
+                <button style={styles.logoutButtonLarge} onClick={logout}>
+                  Logout
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ====================================
   // RENDER: MAIN CHAT UI
   // ====================================
 
@@ -527,7 +885,6 @@ function App() {
     <div style={styles.container}>
       {/* SIDEBAR */}
       <div style={styles.sidebar}>
-        {/* User Profile Header */}
         <div style={styles.userHeader}>
           <div style={styles.userProfile}>
             <div style={styles.avatar}>
@@ -546,7 +903,6 @@ function App() {
           </button>
         </div>
 
-        {/* Navigation Tabs */}
         <div style={styles.navTabs}>
           <button
             style={{
@@ -567,6 +923,16 @@ function App() {
           >
             <span style={styles.navIcon}>👥</span>
             <span>Contacts</span>
+            {contactRequests.length > 0 && (
+              <span style={styles.requestBadge}>{contactRequests.length}</span>
+            )}
+          </button>
+          <button
+            style={styles.navTab}
+            onClick={() => setActiveView("profile")}
+          >
+            <span style={styles.navIcon}>⚙️</span>
+            <span>Settings</span>
           </button>
         </div>
 
@@ -602,11 +968,11 @@ function App() {
                 </div>
 
                 <div style={styles.panelSection}>
-                  <label style={styles.panelLabel}>Join Existing Room</label>
+                  <label style={styles.panelLabel}>Join via Invite Link</label>
                   <div style={styles.inputRow}>
                     <input
                       style={styles.panelInput}
-                      placeholder="Room ID"
+                      placeholder="Paste invite link"
                       value={joinRoomId}
                       onChange={(e) => setJoinRoomId(e.target.value)}
                     />
@@ -646,7 +1012,7 @@ function App() {
                         )}
                       </div>
                       <div style={styles.roomPreview}>
-                        {room.last_message_at ? "Recent activity" : "No messages yet"}
+                        {room.last_message_at ? new Date(room.last_message_at).toLocaleDateString() : "No messages yet"}
                       </div>
                     </div>
                   </div>
@@ -662,6 +1028,40 @@ function App() {
             <div style={styles.listHeader}>
               <h3 style={styles.listTitle}>Contacts</h3>
             </div>
+
+            {/* Contact Requests */}
+            {contactRequests.length > 0 && (
+              <div style={styles.requestsSection}>
+                <div style={styles.requestsHeader}>
+                  <span style={styles.requestsTitle}>Requests</span>
+                  <span style={styles.requestCount}>{contactRequests.length}</span>
+                </div>
+                {contactRequests.map((request) => (
+                  <div key={request.id} style={styles.requestItem}>
+                    <div style={styles.requestAvatar}>
+                      {request.email.charAt(0).toUpperCase()}
+                    </div>
+                    <div style={styles.requestInfo}>
+                      <div style={styles.requestName}>{request.email}</div>
+                      <div style={styles.requestActions}>
+                        <button
+                          style={styles.acceptBtn}
+                          onClick={() => acceptContactRequest(request.id, request.user_id)}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          style={styles.rejectBtn}
+                          onClick={() => rejectContactRequest(request.id)}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div style={styles.searchSection}>
               <div style={styles.searchBox}>
@@ -691,7 +1091,7 @@ function App() {
                       </div>
                       <button
                         style={styles.addBtn}
-                        onClick={() => addContact(result.email)}
+                        onClick={() => sendContactRequest(result.email)}
                       >
                         + Add
                       </button>
@@ -752,7 +1152,6 @@ function App() {
           </div>
         ) : (
           <>
-            {/* Chat Header */}
             <div style={styles.chatHeader}>
               <div style={styles.chatHeaderLeft}>
                 <div style={styles.chatAvatar}>
@@ -762,11 +1161,6 @@ function App() {
                   <div style={styles.chatTitle}>
                     {getRoomTitle(selectedRoomData)}
                   </div>
-                  {selectedRoomData?.type === "group" && (
-                    <div style={styles.roomIdBadge}>
-                      ID: {selectedRoom.slice(0, 8)}...
-                    </div>
-                  )}
                   {typingUsers.size > 0 && (
                     <div style={styles.typingIndicator}>
                       <span style={styles.typingDots}></span>
@@ -777,17 +1171,31 @@ function App() {
               </div>
 
               {selectedRoomData?.type === "group" && (
-                <button
-                  style={styles.copyBtn}
-                  onClick={() => copyRoomId(selectedRoom)}
-                  title="Copy Room ID"
-                >
-                  📋
-                </button>
+                <div style={styles.headerActions}>
+                  <button
+                    style={styles.headerBtn}
+                    onClick={() => {
+                      setEditRoomName(selectedRoomData.name || "");
+                      setShowEditRoomModal(true);
+                    }}
+                    title="Edit Room"
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    style={styles.headerBtn}
+                    onClick={() => {
+                      setShowInviteModal(true);
+                      generateInviteLink();
+                    }}
+                    title="Invite Users"
+                  >
+                    ➕
+                  </button>
+                </div>
               )}
             </div>
 
-            {/* Messages */}
             <div style={styles.messagesArea}>
               {isLoadingMessages ? (
                 <div style={styles.loadingContainer}>
@@ -849,7 +1257,6 @@ function App() {
               )}
             </div>
 
-            {/* Message Input */}
             <div style={styles.inputArea}>
               <input
                 style={styles.messageInput}
@@ -877,16 +1284,122 @@ function App() {
           </>
         )}
       </div>
+
+      {/* INVITE MODAL */}
+      {showInviteModal && (
+        <div style={styles.modalOverlay} onClick={() => setShowInviteModal(false)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h3 style={styles.modalTitle}>Invite to {getRoomTitle(selectedRoomData)}</h3>
+              <button style={styles.closeBtn} onClick={() => setShowInviteModal(false)}>
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.modalBody}>
+              <div style={styles.modalSection}>
+                <label style={styles.modalLabel}>Invite via Email</label>
+                <div style={styles.inputRow}>
+                  <input
+                    style={styles.panelInput}
+                    placeholder="Search by email..."
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && searchUsersForInvite()}
+                  />
+                  <button style={styles.panelBtn} onClick={searchUsersForInvite}>
+                    Search
+                  </button>
+                </div>
+
+                {inviteSearchResults.length > 0 && (
+                  <div style={styles.inviteResults}>
+                    {inviteSearchResults.map((result) => (
+                      <div key={result.id} style={styles.inviteResultItem}>
+                        <div style={styles.inviteResultAvatar}>
+                          {result.email.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={styles.inviteResultInfo}>
+                          <div style={styles.inviteResultName}>{result.email}</div>
+                        </div>
+                        <button
+                          style={styles.inviteBtn}
+                          onClick={() => inviteUserToRoom(result.id)}
+                        >
+                          Invite
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={styles.divider}>
+                <span style={styles.dividerText}>OR</span>
+              </div>
+
+              <div style={styles.modalSection}>
+                <label style={styles.modalLabel}>Share Invite Link</label>
+                <div style={styles.linkBox}>
+                  <input
+                    style={styles.linkInput}
+                    value={inviteLink}
+                    readOnly
+                  />
+                  <button
+                    style={styles.copyLinkBtn}
+                    onClick={() => copyToClipboard(inviteLink)}
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p style={styles.helpText}>
+                  Share this link with anyone you want to invite to this room
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT ROOM MODAL */}
+      {showEditRoomModal && (
+        <div style={styles.modalOverlay} onClick={() => setShowEditRoomModal(false)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h3 style={styles.modalTitle}>Edit Room Name</h3>
+              <button style={styles.closeBtn} onClick={() => setShowEditRoomModal(false)}>
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.modalBody}>
+              <div style={styles.modalSection}>
+                <label style={styles.modalLabel}>Room Name</label>
+                <input
+                  style={styles.input}
+                  placeholder="Enter new room name"
+                  value={editRoomName}
+                  onChange={(e) => setEditRoomName(e.target.value)}
+                />
+              </div>
+
+              <button style={styles.saveButton} onClick={updateRoomName}>
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ====================================
-// MODERN STYLES
+// STYLES
 // ====================================
 
 const styles = {
-  // Auth Styles
   authContainer: {
     minHeight: "100vh",
     display: "flex",
@@ -988,7 +1501,6 @@ const styles = {
     marginTop: "10px",
   },
 
-  // Main Layout
   container: {
     display: "flex",
     height: "100vh",
@@ -1009,7 +1521,6 @@ const styles = {
     background: "#f8fafc",
   },
 
-  // Sidebar Components
   userHeader: {
     padding: "20px",
     background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
@@ -1092,6 +1603,7 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     gap: "8px",
+    position: "relative",
   },
   navTabActive: {
     background: "#f8fafc",
@@ -1099,6 +1611,17 @@ const styles = {
   },
   navIcon: {
     fontSize: "18px",
+  },
+  requestBadge: {
+    position: "absolute",
+    top: "8px",
+    right: "8px",
+    background: "#ef4444",
+    color: "white",
+    borderRadius: "10px",
+    padding: "2px 6px",
+    fontSize: "10px",
+    fontWeight: "700",
   },
 
   listContainer: {
@@ -1254,7 +1777,86 @@ const styles = {
     color: "#94a3b8",
   },
 
-  // Contacts Section
+  // Contact Requests
+  requestsSection: {
+    padding: "12px",
+    background: "white",
+    borderBottom: "1px solid #e2e8f0",
+  },
+  requestsHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "12px",
+  },
+  requestsTitle: {
+    fontSize: "13px",
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  requestCount: {
+    background: "#ef4444",
+    color: "white",
+    borderRadius: "10px",
+    padding: "2px 8px",
+    fontSize: "11px",
+    fontWeight: "700",
+  },
+  requestItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "10px",
+    background: "#f8fafc",
+    borderRadius: "8px",
+    marginBottom: "8px",
+  },
+  requestAvatar: {
+    width: "36px",
+    height: "36px",
+    borderRadius: "8px",
+    background: "#667eea",
+    color: "white",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "14px",
+    fontWeight: "600",
+  },
+  requestInfo: {
+    flex: 1,
+  },
+  requestName: {
+    fontSize: "13px",
+    fontWeight: "600",
+    marginBottom: "6px",
+    color: "#1e293b",
+  },
+  requestActions: {
+    display: "flex",
+    gap: "6px",
+  },
+  acceptBtn: {
+    padding: "4px 12px",
+    background: "#10b981",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    fontSize: "11px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  rejectBtn: {
+    padding: "4px 12px",
+    background: "#ef4444",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    fontSize: "11px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+
   searchSection: {
     padding: "16px",
     background: "white",
@@ -1386,7 +1988,6 @@ const styles = {
     transition: "all 0.2s",
   },
 
-  // Chat Area
   welcomeScreen: {
     flex: 1,
     display: "flex",
@@ -1442,15 +2043,6 @@ const styles = {
     color: "#1e293b",
     marginBottom: "2px",
   },
-  roomIdBadge: {
-    display: "inline-block",
-    padding: "2px 8px",
-    background: "#f1f5f9",
-    borderRadius: "6px",
-    fontSize: "11px",
-    color: "#64748b",
-    marginBottom: "2px",
-  },
   typingIndicator: {
     fontSize: "12px",
     color: "#64748b",
@@ -1466,11 +2058,16 @@ const styles = {
     background: "#64748b",
     animation: "typing 1.4s infinite",
   },
-  copyBtn: {
-    padding: "8px 12px",
+  headerActions: {
+    display: "flex",
+    gap: "8px",
+  },
+  headerBtn: {
+    width: "36px",
+    height: "36px",
+    borderRadius: "8px",
     background: "#f1f5f9",
     border: "none",
-    borderRadius: "8px",
     fontSize: "16px",
     cursor: "pointer",
     transition: "all 0.2s",
@@ -1617,9 +2214,324 @@ const styles = {
   sendIcon: {
     fontSize: "18px",
   },
+
+  // Modal Styles
+  modalOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0, 0, 0, 0.5)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+  },
+  modal: {
+    background: "white",
+    borderRadius: "16px",
+    width: "90%",
+    maxWidth: "500px",
+    maxHeight: "80vh",
+    overflow: "auto",
+  },
+  modalHeader: {
+    padding: "20px 24px",
+    borderBottom: "1px solid #e2e8f0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: "18px",
+    fontWeight: "600",
+    color: "#1e293b",
+  },
+  closeBtn: {
+    width: "32px",
+    height: "32px",
+    borderRadius: "8px",
+    background: "#f1f5f9",
+    border: "none",
+    fontSize: "18px",
+    cursor: "pointer",
+    color: "#64748b",
+  },
+  modalBody: {
+    padding: "24px",
+  },
+  modalSection: {
+    marginBottom: "24px",
+  },
+  modalLabel: {
+    display: "block",
+    marginBottom: "12px",
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#334155",
+  },
+  inviteResults: {
+    marginTop: "12px",
+    maxHeight: "200px",
+    overflowY: "auto",
+  },
+  inviteResultItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "12px",
+    background: "#f8fafc",
+    borderRadius: "8px",
+    marginBottom: "8px",
+  },
+  inviteResultAvatar: {
+    width: "36px",
+    height: "36px",
+    borderRadius: "8px",
+    background: "#667eea",
+    color: "white",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "14px",
+    fontWeight: "600",
+  },
+  inviteResultInfo: {
+    flex: 1,
+  },
+  inviteResultName: {
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#1e293b",
+  },
+  inviteBtn: {
+    padding: "8px 16px",
+    background: "#667eea",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  divider: {
+    textAlign: "center",
+    position: "relative",
+    margin: "24px 0",
+  },
+  dividerText: {
+    background: "white",
+    padding: "0 12px",
+    color: "#94a3b8",
+    fontSize: "12px",
+    fontWeight: "600",
+    position: "relative",
+    zIndex: 1,
+  },
+  linkBox: {
+    display: "flex",
+    gap: "8px",
+  },
+  linkInput: {
+    flex: 1,
+    padding: "12px",
+    border: "1px solid #e2e8f0",
+    borderRadius: "8px",
+    fontSize: "13px",
+    background: "#f8fafc",
+  },
+  copyLinkBtn: {
+    padding: "12px 20px",
+    background: "#667eea",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "600",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  helpText: {
+    marginTop: "8px",
+    fontSize: "12px",
+    color: "#94a3b8",
+  },
+
+  // Profile Page Styles
+  profileContainer: {
+    flex: 1,
+    overflowY: "auto",
+    background: "#f8fafc",
+  },
+  profileHeader: {
+    padding: "32px 40px",
+    background: "white",
+    borderBottom: "1px solid #e2e8f0",
+  },
+  profileTitle: {
+    margin: 0,
+    fontSize: "24px",
+    fontWeight: "700",
+    color: "#1e293b",
+  },
+  profileContent: {
+    padding: "32px 40px",
+    maxWidth: "800px",
+  },
+  profileSection: {
+    padding: "24px",
+    background: "white",
+    borderRadius: "12px",
+    marginBottom: "24px",
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
+  },
+  sectionTitle: {
+    margin: "0 0 20px",
+    fontSize: "16px",
+    fontWeight: "600",
+    color: "#1e293b",
+  },
+  profilePictureSection: {
+    display: "flex",
+    alignItems: "center",
+    gap: "24px",
+  },
+  largeAvatar: {
+    width: "100px",
+    height: "100px",
+    borderRadius: "50%",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "40px",
+    fontWeight: "600",
+    overflow: "hidden",
+  },
+  profileImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+  },
+  fileInput: {
+    display: "none",
+  },
+  uploadButton: {
+    display: "inline-block",
+    padding: "10px 20px",
+    background: "#667eea",
+    color: "white",
+    borderRadius: "8px",
+    fontSize: "14px",
+    fontWeight: "600",
+    cursor: "pointer",
+    transition: "all 0.2s",
+  },
+  infoGroup: {
+    marginBottom: "20px",
+  },
+  infoLabel: {
+    display: "block",
+    marginBottom: "8px",
+    fontSize: "13px",
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  infoValue: {
+    padding: "12px 16px",
+    background: "#f8fafc",
+    borderRadius: "8px",
+    fontSize: "14px",
+    color: "#1e293b",
+  },
+  buttonGroup: {
+    display: "flex",
+    gap: "12px",
+  },
+  saveButton: {
+    padding: "12px 24px",
+    background: "#10b981",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "14px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  cancelButton: {
+    padding: "12px 24px",
+    background: "#f1f5f9",
+    color: "#64748b",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "14px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  editButton: {
+    padding: "12px 24px",
+    background: "#667eea",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "14px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  preferenceItem: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px",
+    background: "#f8fafc",
+    borderRadius: "8px",
+    marginBottom: "12px",
+  },
+  preferenceLabel: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#1e293b",
+    marginBottom: "4px",
+  },
+  preferenceDesc: {
+    fontSize: "12px",
+    color: "#64748b",
+  },
+  switch: {
+    position: "relative",
+    display: "inline-block",
+    width: "48px",
+    height: "28px",
+  },
+  slider: {
+    position: "absolute",
+    cursor: "pointer",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "#e2e8f0",
+    borderRadius: "34px",
+    transition: "0.4s",
+  },
+  logoutButtonLarge: {
+    width: "100%",
+    padding: "14px",
+    background: "#ef4444",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "15px",
+    fontWeight: "600",
+    cursor: "pointer",
+    transition: "all 0.2s",
+  },
 };
 
-// Add keyframes animation for spinner
+// Add CSS animations
 const styleSheet = document.createElement("style");
 styleSheet.textContent = `
   @keyframes spin {
@@ -1630,6 +2542,26 @@ styleSheet.textContent = `
   @keyframes typing {
     0%, 60%, 100% { opacity: 1; }
     30% { opacity: 0.3; }
+  }
+  
+  input[type="checkbox"]:checked + .slider {
+    background: #667eea;
+  }
+  
+  .slider::before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 4px;
+    bottom: 4px;
+    background: white;
+    border-radius: 50%;
+    transition: 0.4s;
+  }
+  
+  input[type="checkbox"]:checked + .slider::before {
+    transform: translateX(20px);
   }
 `;
 document.head.appendChild(styleSheet);
